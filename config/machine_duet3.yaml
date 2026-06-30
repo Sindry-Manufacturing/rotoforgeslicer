@@ -28,6 +28,7 @@ process:
   bead_width_mm: 1.0             # the 1 mm rim edge = fill resolution
   layer_height_mm: 0.12          # range 0.10-0.15
   wire_diameter_mm: 0.50
+  wheel_diameter_mm: 50.0        # tungsten-carbide wheel; the 50 mm collision body (SPEC §1.5)
   raster_overlap: 0.15
   min_deposit_len_mm: 6.0
   inter_pass_lift_mm: 10.0
@@ -61,3 +62,9 @@ emit:                            # G-code feedrate primitives (SPEC §6), mm/min
   feed_z_mm_min: 300.0           # Z plunge / lift
   feed_dep_mm_min: 120.0         # deposition traverse (default v until screener, M3)
   dry_run: false                 # true => spindle/heaters/fan/E disabled (motion test)
+
+collision:                       # 2.5D swept-disc + leading-wire check (SPEC §4.6)
+  enabled: true
+  cell_mm: 0.0                   # height-field cell; 0 => bead_width/2
+  clearance_mm: 0.3              # required gap between the 50 mm disc body and existing material
+  wire_lead_mm: 2.0              # how far the fragile leading wire reaches ahead of contact

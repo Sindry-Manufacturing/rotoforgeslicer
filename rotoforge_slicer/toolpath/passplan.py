@@ -114,6 +114,34 @@ def _e_per_path(cfg: Config, op: OperatingPoint, has_screener: bool) -> float:
     )
 
 
+def order_passes_lead_away(passes: List[Pass]) -> List[Pass]:
+    """Order passes so each leads AWAY from already-laid material (SPEC §4.6).
+
+    Deposit the least-forward passes first (sorted by the lead-out edge's projection
+    onto the heading), so the leading wire always advances into free space and never
+    drives into a previously-deposited bead ahead. Ties (same forward extent — e.g. a
+    convex part where every +Y line ends at the same Y) fall back to the perpendicular
+    coordinate for a deterministic left-to-right sweep.
+    """
+    if not passes:
+        return passes
+    hx, hy = _heading_unit(passes[0].start, passes[0].end)
+
+    def fwd(p):       # forward extent = lead-out edge projected on the heading
+        return p.end[0] * hx + p.end[1] * hy
+
+    def perp(p):      # perpendicular position (heading rotated -90 deg)
+        return p.start[0] * hy - p.start[1] * hx
+
+    return sorted(passes, key=lambda p: (round(fwd(p), 6), round(perp(p), 6)))
+
+
+def _heading_unit(start, end):
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    n = math.hypot(dx, dy)
+    return (dx / n, dy / n) if n else (0.0, 1.0)
+
+
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                e_per_path: float, heading_deg: float = 90.0) -> LayerPlan:
     """Build the straight +Y passes for one sliced layer (SPEC §4.2/§4.5)."""
@@ -135,8 +163,8 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                 traverse_mm_min=operating_point.traverse_mm_min,
                 e_per_path_mm=e_per_path,
             ))
-    # Pass ordering (SPEC §4.6): raster_lines already yields perpendicular order
-    # (left-to-right for +Y) so already-laid beads stay beside the contact.
+    # Pass ordering (SPEC §4.6): lead away from already-laid material.
+    passes = order_passes_lead_away(passes)
     return LayerPlan(index=layer.index, z=layer.z, passes=passes)
 
 

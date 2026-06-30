@@ -50,6 +50,7 @@ class ProcessCfg:
     bead_width_mm: float = 1.0
     layer_height_mm: float = 0.12
     wire_diameter_mm: float = 0.50
+    wheel_diameter_mm: float = 50.0   # the collision body (deposition is the ~1mm rim; SPEC §1.5)
     raster_overlap: float = 0.15
     min_deposit_len_mm: float = 6.0
     inter_pass_lift_mm: float = 10.0
@@ -62,6 +63,15 @@ class ProcessCfg:
     cpap_deposit: int = 255
     bed_temp_c: float = 110.0
     hotshoe_macro: str = "Hotshoe_300C.g"
+
+
+@dataclass
+class CollisionCfg:
+    """2.5D swept-disc + leading-wire collision check (SPEC §4.6)."""
+    enabled: bool = True
+    cell_mm: float = 0.0       # height-field cell; 0 => bead_width/2 (fine enough vs pitch)
+    clearance_mm: float = 0.3  # required gap between the disc body and existing material
+    wire_lead_mm: float = 2.0  # how far the fragile leading wire reaches ahead of contact
 
 
 @dataclass
@@ -106,6 +116,7 @@ class Config:
     screener: ScreenerCfg = field(default_factory=ScreenerCfg)
     gcode: GcodeCfg = field(default_factory=GcodeCfg)
     emit: EmitCfg = field(default_factory=EmitCfg)
+    collision: CollisionCfg = field(default_factory=CollisionCfg)
 
 
 def _filter(dc_type, data: Mapping[str, Any] | None) -> dict:
@@ -137,4 +148,5 @@ def load_config(path: str | Path) -> Config:
         screener=ScreenerCfg(**_filter(ScreenerCfg, raw.get("screener"))),
         gcode=GcodeCfg(**_filter(GcodeCfg, raw.get("gcode"))),
         emit=EmitCfg(**_filter(EmitCfg, raw.get("emit"))),
+        collision=CollisionCfg(**_filter(CollisionCfg, raw.get("collision"))),
     )
