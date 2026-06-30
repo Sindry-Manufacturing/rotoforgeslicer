@@ -9,12 +9,13 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 
 ## Status
 
-Scaffold. **Implemented and tested:** config loading, heading<->A-axis mapping and
-the +/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
-contact-"grinding" invariant, screener operating-point selection, and the G-code
-preamble/postamble. **Stubbed** (build with Claude Code per the spec): mesh
-slicing, raster/streamline fill, pass planning, collision, the G-code emitter
-body, and the GUI.
+Scaffold + **M1 (geometry) complete.** **Implemented and tested:** config loading,
+heading<->A-axis mapping and the +/-45 deg wedge check, the curvature/slew limit,
+extrusion ratios, the contact-"grinding" invariant, screener operating-point
+selection, the G-code preamble/postamble, and **M1: mesh load + repair + planar
+`section_multiplane` slicing -> shapely region polygons (`geometry/`), plus a
+matplotlib per-layer preview (`gui/preview.py`)**. **Stubbed** (next, per the spec):
+raster/streamline fill, pass planning, collision, the G-code emitter body, and the GUI.
 
 ## Quickstart
 
@@ -32,7 +33,7 @@ rotoforge_slicer/      package
   config.py            YAML -> dataclasses                 [done]
   pipeline.py          orchestrator                        [stub]
   cli.py               headless CLI                        [done/stub]
-  geometry/            load + repair + planar slice         [backend done, impl stub]
+  geometry/            load + repair + planar slice         [M1 done]
   fill/                wedge, raster, streamline, curvature [wedge+curvature done]
   toolpath/            state machine, pass plan, collision  [invariant done]
   process/             screener CSV, extrusion              [done]

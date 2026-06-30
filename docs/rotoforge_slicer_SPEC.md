@@ -1,7 +1,7 @@
 # Rotoforge Slicer — Software Specification
 
 **Target builder:** Claude Code
-**Author of spec:** derived from design sessions with Avery Lockwood (technical lead)
+**Author of spec:** derived from design sessions with Avery Lockwood and Michael Lynn(technical leads)
 **Status:** implementation-ready v1
 **Last updated:** 2026-06-29
 
@@ -143,7 +143,7 @@ flowchart TD
 > **Packaging note on `pyclipr`:** prebuilt wheels historically cover Windows/macOS but **may build from source on Linux** (needs a C++ toolchain). The build/CI environment (§8) must have `build-essential`/`cmake`; once built there, PyInstaller bundles the compiled extension fine. Fallbacks if needed: `pyclipper` (Clipper1, has manylinux wheels) or `shapely` `.buffer()`/`.intersection()` for offset/clip.
 
 ### 3.3 Geometry backend abstraction
-Define `geometry/backend.py::GeometryBackend` (ABC) with `load(path) -> Mesh`, `repair(mesh) -> Mesh`, `slice(mesh, z_heights) -> list[LayerRegions]`. Ship `TrimeshBackend` (default). Leave a `MeshLibBackend` stub. Planning/emission code depends only on the ABC and on shapely polygons — never on a specific mesh library.
+Define `geometry/backend.py::GeometryBackend` (ABC) with `load(path) -> Mesh`, `repair(mesh) -> Mesh`, `bounds(mesh) -> (min_xyz, max_xyz)` (so the planner picks layer Z heights without knowing the mesh type), `slice(mesh, z_heights) -> list[LayerRegions]`. Ship `TrimeshBackend` (default). Leave a `MeshLibBackend` stub. Planning/emission code depends only on the ABC and on shapely polygons — never on a specific mesh library.
 
 ---
 
@@ -428,6 +428,7 @@ Key signatures (illustrative):
 class GeometryBackend(ABC):
     def load(self, path: str) -> "Mesh": ...
     def repair(self, mesh) -> "Mesh": ...
+    def bounds(self, mesh) -> tuple[tuple[float, float, float], tuple[float, float, float]]: ...
     def slice(self, mesh, z_heights: list[float]) -> list["LayerRegions"]: ...
 
 # fill/wedge.py
