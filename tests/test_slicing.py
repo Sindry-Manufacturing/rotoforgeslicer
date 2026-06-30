@@ -254,10 +254,36 @@ def test_pipeline_slice_geometry(tmp_path):
     assert all(math.isclose(ly.area, 100.0, rel_tol=1e-6) for ly in model.nonempty_layers)
 
 
-def test_pipeline_slice_mesh_still_stubbed_after_geometry(tmp_path):
-    from rotoforge_slicer.pipeline import slice_mesh
+def test_pipeline_place_on_bed_centres_and_drops_to_z0(tmp_path):
+    from rotoforge_slicer.config import load_config
+    from rotoforge_slicer.geometry import place_on_bed
+    from rotoforge_slicer.pipeline import slice_geometry
 
     stl = tmp_path / "box.stl"
-    trimesh.creation.box(extents=(6, 6, 2)).export(stl)
-    with pytest.raises(NotImplementedError):
-        slice_mesh(str(stl), str(CFG))
+    trimesh.creation.box(extents=(20, 12, 4)).export(stl)  # centred at origin
+    cfg = load_config(CFG)
+    model = slice_geometry(str(stl), cfg)            # unplaced
+    placed = place_on_bed(model, cfg)
+
+    assert math.isclose(placed.z_min, 0.0, abs_tol=1e-9)   # rests on the bed
+    bx, by, _ = cfg.machine.build_volume_mm
+    bnds = [ly.bounds for ly in placed.layers if ly.bounds]
+    xmin = min(b[0] for b in bnds)
+    xmax = max(b[2] for b in bnds)
+    ymin = min(b[1] for b in bnds)
+    ymax = max(b[3] for b in bnds)
+    assert math.isclose(0.5 * (xmin + xmax), bx / 2.0, abs_tol=1e-6)   # centred in X
+    # the [ymin, ymax + lead_out] envelope is centred (reserves the +Y lead-out)
+    lead = cfg.process.lead_out_len_mm
+    assert math.isclose(0.5 * (ymin + ymax + lead), by / 2.0, abs_tol=1e-6)
+    # translation preserves area
+    assert math.isclose(placed.total_area, model.total_area, rel_tol=1e-9)
+
+
+def test_place_on_bed_empty_model_unchanged():
+    from rotoforge_slicer.config import Config
+    from rotoforge_slicer.geometry import place_on_bed
+
+    model = SlicedModel([Layer(0, 0.0, []), Layer(1, 0.1, [])],
+                        layer_height=0.1, z_min=0.0, z_max=0.1)
+    assert place_on_bed(model, Config()) is model   # nothing to place -> unchanged

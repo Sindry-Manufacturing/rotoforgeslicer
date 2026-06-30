@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import __version__
 
@@ -22,12 +23,18 @@ def main(argv=None) -> int:
         p.print_help()
         return 0
 
+    out = args.output or str(Path(args.mesh).with_suffix(".gcode"))  # beside the mesh
+
     from .pipeline import slice_mesh  # lazy: pulls heavy deps
     try:
-        slice_mesh(args.mesh, args.config, args.screener, args.output)
+        gcode = slice_mesh(args.mesh, args.config, args.screener, out)
     except NotImplementedError as e:
         print(f"[not yet implemented] {e}", file=sys.stderr)
         return 2
+    except (ValueError, FileNotFoundError) as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 1
+    print(f"wrote {out} ({gcode.count(chr(10))} lines)")
     return 0
 
 

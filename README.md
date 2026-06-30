@@ -9,13 +9,26 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 
 ## Status
 
-Scaffold + **M1 (geometry) complete.** **Implemented and tested:** config loading,
-heading<->A-axis mapping and the +/-45 deg wedge check, the curvature/slew limit,
-extrusion ratios, the contact-"grinding" invariant, screener operating-point
-selection, the G-code preamble/postamble, and **M1: mesh load + repair + planar
-`section_multiplane` slicing -> shapely region polygons (`geometry/`), plus a
-matplotlib per-layer preview (`gui/preview.py`)**. **Stubbed** (next, per the spec):
-raster/streamline fill, pass planning, collision, the G-code emitter body, and the GUI.
+Scaffold + **M1 (geometry) and M2 (straight fill + emitter) complete.**
+**Implemented and tested:** config loading, heading<->A-axis mapping and the
++/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
+contact-"grinding" invariant, screener operating-point selection; **M1**: mesh
+load + repair + planar `section_multiplane` slicing -> shapely regions
+(`geometry/`) + matplotlib preview (`gui/preview.py`); **M2**: unidirectional +Y
+raster fill (`fill/raster.py`), constant-(v,RPM) straight-pass planning
+(`toolpath/passplan.py`), bed placement, and a SPEC-compliant RRF emitter
+(`emit/rrf.py`) that proves the §6.3 invariants (wedge, contact/no-grinding,
+monotonic E, airborne dwells, single RPM+traverse, in-build-volume). `rotoforge-slice
+mesh.stl` now writes a `.gcode`. **Stubbed** (next, per the spec): the process-window
+RPM/feed per region (M3), 2.5D collision/lead-out approach (M4), curved streamline
+fill + cross-layer crosshatch (M5), and the GUI (M6).
+
+> **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
+> `afrb_playground_gui(2).py` generator are not in the repo; the only existing
+> reference output is from a superseded prototype whose closed perimeters and
+> 0-220 deg A range conflict with the SPEC's wedge/no-perimeter invariants. Per
+> decision, M2 is built to the authoritative SPEC and **bit-exact `afrb_yline_*`
+> parity is deferred** until those reference files are provided.
 
 ## Quickstart
 
@@ -33,11 +46,11 @@ rotoforge_slicer/      package
   config.py            YAML -> dataclasses                 [done]
   pipeline.py          orchestrator                        [stub]
   cli.py               headless CLI                        [done/stub]
-  geometry/            load + repair + planar slice         [M1 done]
-  fill/                wedge, raster, streamline, curvature [wedge+curvature done]
-  toolpath/            state machine, pass plan, collision  [invariant done]
+  geometry/            load + repair + planar slice + place [M1 done]
+  fill/                wedge, raster, streamline, curvature [wedge+curvature+raster done]
+  toolpath/            state machine, pass plan, collision  [invariant+passplan done]
   process/             screener CSV, extrusion              [done]
-  emit/                RRF G-code emitter, templates        [templates+validators done]
+  emit/                RRF G-code emitter, templates        [M2 emitter done]
   gui/                 PySide6 app + matplotlib preview     [stub]
 config/                machine_duet3.yaml
 docs/                  rotoforge_slicer_SPEC.md

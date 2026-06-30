@@ -53,6 +53,8 @@ class ProcessCfg:
     raster_overlap: float = 0.15
     min_deposit_len_mm: float = 6.0
     inter_pass_lift_mm: float = 10.0
+    lead_in_len_mm: float = 2.0       # moving-plunge forward distance (SPEC §4.4)
+    approach_clearance_mm: float = 0.5  # airborne gap above the surface before the moving plunge
     lead_out_len_mm: float = 4.0
     travel_z_mm: float = 10.0
     startup_settle_ms: int = 10000
@@ -60,6 +62,17 @@ class ProcessCfg:
     cpap_deposit: int = 255
     bed_temp_c: float = 110.0
     hotshoe_macro: str = "Hotshoe_300C.g"
+
+
+@dataclass
+class EmitCfg:
+    """G-code feedrate primitives (SPEC §6). Defaults are the validated values
+    seen in the existing tool's output (travel 2500, Z 300, deposition 120 mm/min).
+    ``dry_run`` disables spindle/heaters/fan/E for a motion-only test file."""
+    feed_travel_mm_min: float = 2500.0
+    feed_z_mm_min: float = 300.0
+    feed_dep_mm_min: float = 120.0     # also the default traverse when no screener
+    dry_run: bool = False
 
 
 @dataclass
@@ -92,6 +105,7 @@ class Config:
     extrusion: ExtrusionCfg = field(default_factory=ExtrusionCfg)
     screener: ScreenerCfg = field(default_factory=ScreenerCfg)
     gcode: GcodeCfg = field(default_factory=GcodeCfg)
+    emit: EmitCfg = field(default_factory=EmitCfg)
 
 
 def _filter(dc_type, data: Mapping[str, Any] | None) -> dict:
@@ -122,4 +136,5 @@ def load_config(path: str | Path) -> Config:
         extrusion=ExtrusionCfg(**_filter(ExtrusionCfg, raw.get("extrusion"))),
         screener=ScreenerCfg(**_filter(ScreenerCfg, raw.get("screener"))),
         gcode=GcodeCfg(**_filter(GcodeCfg, raw.get("gcode"))),
+        emit=EmitCfg(**_filter(EmitCfg, raw.get("emit"))),
     )

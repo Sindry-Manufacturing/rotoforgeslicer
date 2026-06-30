@@ -1,40 +1,62 @@
 """End-to-end orchestrator. SPEC §3.1, §11.
 
-mesh -> slice -> wedge-constrained fill -> pass plan -> collision -> emit G-code.
-Implemented across milestones M1-M5. M1 wires the geometry stage
-(``slice_geometry``); the fill/plan/emit stages raise until their milestones land.
+mesh -> slice -> place -> wedge raster fill -> pass plan -> emit RRF G-code.
+M1 wired the geometry stage; M2 adds straight-fill planning + the emitter. Pass
+planning collision/curved fill (M4/M5) refine the plan further later.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 from .config import Config, load_config
 
 
-def slice_geometry(mesh_path: str, config: "str | Config", backend=None):
-    """Milestone M1: load + repair + planar-slice a mesh into a SlicedModel.
+def slice_geometry(mesh_path: str, config: "str | Config", backend=None,
+                   *, place: bool = False):
+    """Load + repair + planar-slice a mesh into a SlicedModel (SPEC §3.1).
 
-    ``config`` may be a path to the YAML or an already-loaded :class:`Config`.
-    ``backend`` defaults to the trimesh backend (SPEC §3.3). trimesh/shapely are
-    pulled lazily here, not at package import.
+    ``config`` may be a path or a loaded :class:`Config`. With ``place=True`` the
+    model is dropped to the bed and centred in XY (SPEC §6.3). trimesh/shapely are
+    imported lazily here, not at package import.
     """
     cfg = config if isinstance(config, Config) else load_config(config)
     if backend is None:
         from .geometry.trimesh_backend import TrimeshBackend
 
         backend = TrimeshBackend()
-    from .geometry.slicing import slice_model
+    from .geometry.slicing import place_on_bed, slice_model
 
     mesh = backend.load(mesh_path)
-    return slice_model(backend, mesh, cfg.process.layer_height_mm)
+    model = slice_model(backend, mesh, cfg.process.layer_height_mm)
+    return place_on_bed(model, cfg) if place else model
 
 
 def slice_mesh(mesh_path: str, config_path: str,
                screener_csv: str | None = None,
                out_path: str | None = None) -> str:
+    """Full pipeline: mesh -> placed slices -> straight raster passes -> RRF G-code.
+
+    Returns the G-code text; also writes it to ``out_path`` when given. A screener
+    CSV (optional until M3) selects the operating point; otherwise a single-speed
+    fallback is used (SPEC §5.3).
+    """
     cfg = load_config(config_path)
-    # M1: geometry stage is live.
-    model = slice_geometry(mesh_path, cfg)  # noqa: F841
-    # M2-M5: fill -> pass plan -> collision -> emit are still stubbed.
-    raise NotImplementedError(
-        f"Sliced {len(model.nonempty_layers)}/{len(model)} non-empty layers (M1 done). "
-        "Fill -> pass plan -> collision -> G-code emission land in M2-M5 (SPEC §11)."
-    )
+    model = slice_geometry(mesh_path, cfg, place=True)
+
+    op = None
+    if screener_csv:
+        from .process.screener import select_operating_point
+
+        op = select_operating_point(
+            screener_csv, mode=cfg.screener.revs_per_mm_mode,
+            target=cfg.screener.revs_per_mm_target, tol=cfg.screener.revs_per_mm_tol)
+
+    from .emit.rrf import GCodeEmitter
+    from .toolpath.passplan import plan_toolpath
+
+    plan = plan_toolpath(model, cfg, operating_point=op)
+    gcode = GCodeEmitter(cfg).emit(plan)
+
+    if out_path:
+        Path(out_path).write_text(gcode, encoding="utf-8")
+    return gcode

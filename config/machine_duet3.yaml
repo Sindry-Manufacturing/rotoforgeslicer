@@ -31,6 +31,8 @@ process:
   raster_overlap: 0.15
   min_deposit_len_mm: 6.0
   inter_pass_lift_mm: 10.0
+  lead_in_len_mm: 2.0            # moving-plunge forward distance (SPEC §4.4)
+  approach_clearance_mm: 0.5     # airborne gap above the surface before the moving plunge
   lead_out_len_mm: 4.0
   travel_z_mm: 10.0
   startup_settle_ms: 10000       # airborne
@@ -53,3 +55,9 @@ gcode:
   preamble_macros: [Hotshoe_300C.g, CPAP_100pct.g]
   postamble_macros: [CPAP_OFF.g, Hotshoe_OFF.g]
   use_relative_e: true
+
+emit:                            # G-code feedrate primitives (SPEC §6), mm/min
+  feed_travel_mm_min: 2500.0     # rapid / airborne travel
+  feed_z_mm_min: 300.0           # Z plunge / lift
+  feed_dep_mm_min: 120.0         # deposition traverse (default v until screener, M3)
+  dry_run: false                 # true => spindle/heaters/fan/E disabled (motion test)

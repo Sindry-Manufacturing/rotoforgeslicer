@@ -127,6 +127,39 @@ class SlicedModel:
         return float(sum(ly.area for ly in self.layers))
 
 
+def place_on_bed(model: "SlicedModel", cfg) -> "SlicedModel":
+    """Translate a sliced model so it rests on the bed and is centred in XY.
+
+    Drops the part bottom to Z=0 and centres its XY footprint on the build-plate
+    centre (matching the reference tool's "Placed model bounds"). The +Y lead-out
+    that follows every pass is reserved when centring, so a part that itself fits
+    does not push its lead-outs off the plate (SPEC §6.3). shapely-only, so it stays
+    backend-agnostic.
+    """
+    from shapely import affinity
+
+    bnds = [ly.bounds for ly in model.layers if ly.bounds is not None]
+    if not bnds:
+        return model
+    xmin = min(b[0] for b in bnds)
+    ymin = min(b[1] for b in bnds)
+    xmax = max(b[2] for b in bnds)
+    ymax = max(b[3] for b in bnds)
+    bx, by, _ = cfg.machine.build_volume_mm
+    lead_out = cfg.process.lead_out_len_mm
+    dx = bx / 2.0 - 0.5 * (xmin + xmax)
+    # centre the [ymin, ymax + lead_out] envelope so +Y lead-outs stay on the plate
+    dy = by / 2.0 - 0.5 * (ymin + ymax + lead_out)
+    dz = -model.z_min
+    layers = [
+        Layer(index=ly.index, z=ly.z + dz,
+              regions=[affinity.translate(p, dx, dy) for p in ly.regions])
+        for ly in model.layers
+    ]
+    return SlicedModel(layers=layers, layer_height=model.layer_height,
+                       z_min=model.z_min + dz, z_max=model.z_max + dz)
+
+
 def slice_model(
     backend,
     mesh,

@@ -35,6 +35,11 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.geometry.meshlib_backend
     import rotoforge_slicer.gui.preview
     import rotoforge_slicer.pipeline
+    import rotoforge_slicer.fill.raster
+    import rotoforge_slicer.fill.wedge
+    import rotoforge_slicer.toolpath.passplan
+    import rotoforge_slicer.emit.rrf
+    import rotoforge_slicer.emit.templates
 
     # Pure-python helpers must work with all heavy deps blocked.
     assert rotoforge_slicer.geometry.layer_heights(0.0, 1.0, 0.5) == [0.25, 0.75]

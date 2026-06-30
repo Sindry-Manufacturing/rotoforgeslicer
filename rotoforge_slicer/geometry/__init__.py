@@ -12,6 +12,7 @@ from .slicing import (
     SlicedModel,
     clean_polygons,
     layer_heights,
+    place_on_bed,
     slice_model,
 )
 from .trimesh_backend import TrimeshBackend
@@ -24,5 +25,6 @@ __all__ = [
     "SlicedModel",
     "clean_polygons",
     "layer_heights",
+    "place_on_bed",
     "slice_model",
 ]
