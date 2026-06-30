@@ -1,0 +1,55 @@
+# Rotoforge Slicer — machine + process configuration
+# See docs/rotoforge_slicer_SPEC.md §7. Values from hardware_info.md / misc.md.
+
+machine:
+  name: duet3
+  rotary_axis_letter: A          # functionally a C axis (about Z); rename to C after firmware change
+  build_volume_mm: [380, 235, 250]
+  feedrate_mode: per_segment_compensation   # per_segment_compensation | firmware_excludes_rotary
+  steps:
+    x: 80
+    y: 80
+    z: 400
+    e_per_mm: 46.73              # recalibrated 2026-05-03
+    a_per_deg: 26.667
+
+c_axis:
+  home_heading_deg: 90           # +Y is 90 deg CCW from +X
+  home_offset_deg: 0
+  invert_sign: 1                 # +1 or -1; calibrate to firmware M569 direction
+  wedge_half_angle_deg: 45       # depositable headings: +Y +/- 45 deg
+  max_speed_deg_s: 0.0           # MEASURE on hardware; 0 => R_min = inf (no curve limit set yet)
+
+spindle:
+  rpm_min: 5000
+  rpm_max: 30000
+
+process:
+  bead_width_mm: 1.0             # the 1 mm rim edge = fill resolution
+  layer_height_mm: 0.12          # range 0.10-0.15
+  wire_diameter_mm: 0.50
+  raster_overlap: 0.15
+  min_deposit_len_mm: 6.0
+  inter_pass_lift_mm: 10.0
+  lead_out_len_mm: 4.0
+  travel_z_mm: 10.0
+  startup_settle_ms: 10000       # airborne
+  spindle_dwell_ms: 2000         # airborne only; keep < 6000
+  cpap_deposit: 255
+  bed_temp_c: 110
+  hotshoe_macro: Hotshoe_300C.g
+
+extrusion:
+  mode: screener                 # screener | x | volume
+  x_ratio: 1.0
+
+screener:
+  csv_path: ""                   # path to FRAM screener "Export CSV"
+  revs_per_mm_mode: auto         # auto | manual
+  revs_per_mm_target: 0.0        # used when mode == manual
+  revs_per_mm_tol: 5.0           # rpm/(mm/min)
+
+gcode:
+  preamble_macros: [Hotshoe_300C.g, CPAP_100pct.g]
+  postamble_macros: [CPAP_OFF.g, Hotshoe_OFF.g]
+  use_relative_e: true

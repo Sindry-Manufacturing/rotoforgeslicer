@@ -1,0 +1,24 @@
+# Rotoforge Slicer — runtime dependencies
+# Geometry core is the permissively-licensed "PySLM stack" (trimesh + pyclipr + shapely).
+# See docs/rotoforge_slicer_SPEC.md §3.2.
+
+numpy>=1.24
+trimesh[easy]>=4.0        # MIT — mesh load, repair, planar slicing (section_multiplane)
+shapely>=2.0             # BSD — 2D region polygons, boolean/area ops
+pyclipr>=0.1             # Clipper2 polygon offset + clip (Linux may build from source)
+rtree>=1.0              # trimesh spatial index
+networkx>=3.0           # trimesh path assembly
+scipy>=1.10             # trimesh / geometry helpers
+pyyaml>=6.0             # config
+
+PySide6>=6.5            # LGPL — GUI
+matplotlib>=3.7         # embedded per-layer / 3D preview
+
+# ----- optional, NOT installed by default -----
+# meshlib              # higher-robustness repair backend.
+#                      # DUAL-LICENSE: free for non-commercial/education,
+#                      # PAID commercial license required otherwise. Enable only behind
+#                      # the GeometryBackend interface (SPEC §3.3) if you hold a license.
+# pyvista              # nicer true-3D preview (heavy PyInstaller bundle)
+# pyvistaqt            #   "
+# manifold3d           # robust mesh booleans if support volumes are ever needed

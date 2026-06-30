@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rotoforge-slicer"
+version = "0.1.0"
+description = "Custom slicer / toolpath generator for the Rotoforge AFRB friction wire-deposition machine"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+  "numpy>=1.24",
+  "trimesh[easy]>=4.0",
+  "shapely>=2.0",
+  "pyclipr>=0.1",
+  "rtree>=1.0",
+  "networkx>=3.0",
+  "scipy>=1.10",
+  "pyyaml>=6.0",
+  "PySide6>=6.5",
+  "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pyinstaller>=6.0"]
+# meshlib is DUAL-LICENSED (commercial use requires a paid license) — opt-in only.
+meshlib = ["meshlib"]
+viz3d = ["pyvista", "pyvistaqt"]
+
+[project.scripts]
+rotoforge-slice = "rotoforge_slicer.cli:main"
+
+[project.gui-scripts]
+rotoforge-slicer-gui = "rotoforge_slicer.gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["rotoforge_slicer*"]
