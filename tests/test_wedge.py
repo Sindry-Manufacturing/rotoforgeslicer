@@ -24,3 +24,24 @@ def test_vectors():
     assert vector_in_wedge(0, 1, cfg)        # +Y depositable
     assert not vector_in_wedge(0, -1, cfg)   # -Y impossible
     assert not vector_in_wedge(1, 0, cfg)    # +X outside wedge
+
+
+# The machine config widens the wedge to 90 (GUI-adjustable 0..180). At exactly
+# 90 the depositable set is the closed +Y half-plane: every dy >= 0 heading is in
+# (sideways +/-X land on the boundary), every dy < 0 heading is out. -Y stays
+# impossible -- the wedge must never wrap around to admit a rearward heading.
+w90 = CAxisCfg(wedge_half_angle_deg=90.0)
+
+
+def test_wedge_90_is_the_plus_y_half_plane():
+    assert vector_in_wedge(0, 1, w90)        # +Y
+    assert vector_in_wedge(1, 0, w90)        # +X boundary now depositable
+    assert vector_in_wedge(-1, 0, w90)       # -X boundary now depositable
+    assert vector_in_wedge(1, 1, w90)        # +X+Y diagonal
+    assert vector_in_wedge(-1, 1, w90)       # -X+Y diagonal
+
+
+def test_wedge_90_still_forbids_rearward():
+    assert not vector_in_wedge(0, -1, w90)   # -Y impossible
+    assert not vector_in_wedge(1, -1, w90)   # down-right (dy<0) rejected
+    assert not vector_in_wedge(-1, -1, w90)  # down-left  (dy<0) rejected
