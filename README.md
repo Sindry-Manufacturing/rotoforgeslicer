@@ -9,8 +9,8 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 
 ## Status
 
-Scaffold + **M1 (geometry), M2 (straight fill + emitter), M3 (process window),
-M4 (contact & collision), and M5 (curved fill) complete.** **Implemented and tested:** config loading, heading<->A-axis mapping and
+Scaffold + **M1–M6 complete** (geometry, straight fill + emitter, process window,
+contact & collision, curved fill, and the GUI). **Implemented and tested:** config loading, heading<->A-axis mapping and
 the +/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
 contact-"grinding" invariant; **M1**: mesh load + repair + planar
 `section_multiplane` slicing -> shapely regions (`geometry/`) + matplotlib preview
@@ -26,8 +26,13 @@ the curvature/slew limit (`fill/curvature.py`, now calibrated `max_speed_deg_s=3
 +Y-biased boundary-following **streamline fill** (`fill/streamline.py`) with
 per-pass curvature splitting, **cross-layer crosshatch**, and a polyline pass model
 emitted as per-segment curved moves with the §6.3 `R ≥ R_min` proof. Set
-`fill.mode: streamline` and/or `fill.crosshatch: true` in the config to enable.
-**Stubbed** (next, per the spec): the GUI (M6) and packaging (M7).
+`fill.mode: streamline` and/or `fill.crosshatch: true` in the config to enable; **M6**:
+a PySide6 GUI (`gui/`) — open a mesh, tweak process fields, Slice off the UI thread,
+scrub layers with a slider, inspect the toolpath (deposition vectors, lead-outs,
+wire-cuts, resets, the ±45 deg wedge, collisions) with mouse zoom/pan, and Save the
+validated G-code. Launch with `rotoforge-slicer-gui [mesh.stl]`. **Stubbed** (next, per
+the spec): packaging (M7) — the PyInstaller specs + CI matrix already exist in
+`packaging/`/`.github/`, pending a build run on each OS.
 
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
 > `afrb_playground_gui(2).py` generator are not in the repo; the only existing
@@ -57,7 +62,7 @@ rotoforge_slicer/      package
   toolpath/            state machine, pass plan, collision  [M4 done]
   process/             screener CSV, extrusion              [M3 done]
   emit/                RRF G-code emitter, templates        [M2 emitter done]
-  gui/                 PySide6 app + matplotlib preview     [stub]
+  gui/                 PySide6 app + matplotlib preview     [M6 done]
 config/                machine_duet3.yaml
 docs/                  rotoforge_slicer_SPEC.md
 packaging/             PyInstaller spec + per-OS build scripts

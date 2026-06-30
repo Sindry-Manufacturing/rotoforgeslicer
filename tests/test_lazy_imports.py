@@ -34,6 +34,8 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.geometry.trimesh_backend
     import rotoforge_slicer.geometry.meshlib_backend
     import rotoforge_slicer.gui.preview
+    import rotoforge_slicer.gui.app
+    import rotoforge_slicer.gui.model
     import rotoforge_slicer.pipeline
     import rotoforge_slicer.fill.raster
     import rotoforge_slicer.fill.wedge

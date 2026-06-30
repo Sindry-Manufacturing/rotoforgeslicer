@@ -111,6 +111,76 @@ def _draw_wedge(ax, regions, cfg) -> None:
                 color="#107C10", ls="--", lw=1.0, alpha=0.8)
 
 
+def plot_toolpath_layer(layer, layer_plan, ax=None, *, cfg=None, show_wedge=True,
+                        show_resets=True, collisions=None, title=None):
+    """Draw one layer's planned toolpath: region fill + deposition vectors + lead-outs /
+    wire-cuts + reset (airborne travel) moves + the depositable wedge (SPEC §9).
+
+    ``layer`` is a geometry.Layer (regions), ``layer_plan`` a passplan.LayerPlan (or a
+    bare list of passes). Returns the Axes. ``collisions`` may be Collision records whose
+    ``at`` points are flagged in red (validation overlay)."""
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        _, ax = plt.subplots()
+
+    plot_layer(layer, ax=ax, cfg=cfg, show_wedge=show_wedge,
+               facecolor="#e9eef5", edgecolor="#9bb0c9", alpha=0.75, title="")
+
+    passes = getattr(layer_plan, "passes", layer_plan) or []
+    lead_out = getattr(getattr(cfg, "process", None), "lead_out_len_mm", 4.0)
+
+    if passes:
+        # A straight pass's quiver spans the whole line. A curved pass gets a short
+        # heading arrow (its FIRST segment, matching p.a_deg — not a misleading chord)
+        # plus its full polyline so the bow is visible.
+        straight = [p for p in passes if not getattr(p, "is_curved", False)]
+        curved = [p for p in passes if getattr(p, "is_curved", False)]
+        if straight:
+            ax.quiver([p.start[0] for p in straight], [p.start[1] for p in straight],
+                      [p.end[0] - p.start[0] for p in straight],
+                      [p.end[1] - p.start[1] for p in straight],
+                      angles="xy", scale_units="xy", scale=1, color="#1f5fd6",
+                      width=0.004, headwidth=3.2, headlength=4, zorder=4)
+        if curved:
+            ax.quiver([p.start[0] for p in curved], [p.start[1] for p in curved],
+                      [p.points[1][0] - p.start[0] for p in curved],
+                      [p.points[1][1] - p.start[1] for p in curved],
+                      angles="xy", scale_units="xy", scale=1, color="#1f5fd6",
+                      width=0.004, headwidth=3.2, headlength=4, zorder=4)
+            for p in curved:
+                ax.plot([q[0] for q in p.points], [q[1] for q in p.points],
+                        color="#1f5fd6", lw=1.0, zorder=4)
+
+    for i, p in enumerate(passes):
+        (x1, y1) = p.end
+        prev = p.points[-2] if len(p.points) >= 2 else p.start
+        n = math.hypot(x1 - prev[0], y1 - prev[1]) or 1.0
+        ux, uy = (x1 - prev[0]) / n, (y1 - prev[1]) / n
+        lx, ly = x1 + lead_out * ux, y1 + lead_out * uy
+        ax.plot([x1, lx], [y1, ly], color="#e0a000", lw=1.1, zorder=3)        # lead-out
+        ax.plot([lx], [ly], marker="x", color="#c0392b", ms=4, zorder=5)      # wire cut
+        if show_resets and i + 1 < len(passes):                               # reset/travel
+            nx, ny = passes[i + 1].start
+            ax.plot([lx, nx], [ly, ny], color="#888", ls=":", lw=0.5, zorder=2)
+
+    if collisions:
+        cx = [c.at[0] for c in collisions]
+        cy = [c.at[1] for c in collisions]
+        ax.scatter(cx, cy, s=70, facecolors="none", edgecolors="#e01010",
+                   linewidths=1.6, zorder=6, label="collision")
+
+    z = getattr(layer, "z", None)
+    idx = getattr(layer, "index", None)
+    if title is None and z is not None:
+        title = f"layer {idx}  z={z:.2f} mm   |   {len(passes)} passes"
+    if title:
+        ax.set_title(title, fontsize=10)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.autoscale_view()
+    return ax
+
+
 def _sample_indices(count: int, n: int):
     """Indices of ``min(n, count)`` items spread evenly across ``range(count)``.
 
@@ -159,5 +229,12 @@ def plot_slices(model, max_layers: int = 12, *, cfg=None):
 
 
 def make_preview_canvas(parent=None):
-    """Embedded Qt FigureCanvas for the GUI. SPEC §9.  [stub — M6]"""
-    raise NotImplementedError("make_preview_canvas: implement per SPEC §9 (M6)")
+    """An embedded Qt matplotlib canvas for the GUI preview (SPEC §9)."""
+    import matplotlib
+    matplotlib.use("QtAgg")
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+    from matplotlib.figure import Figure
+
+    canvas = FigureCanvasQTAgg(Figure(figsize=(6, 6)))
+    canvas.figure.add_subplot(111)
+    return canvas
