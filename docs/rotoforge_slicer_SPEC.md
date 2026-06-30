@@ -71,10 +71,10 @@ These are **hard invariants**. Violating them either ruins the part or **grinds 
 3. **Two-state contact model, with a forbidden trap** (§4.4). A spinning wheel that is **in contact while not moving, moving too slowly, or not feeding wire is *subtractive*** — it grinds a 1 mm slot. All dwells (startup settle, between-pass spindle stabilization) must happen **airborne** (wheel lifted, spinning, not touching).
 4. **Wire feed is monotonic.** `E` never decreases during a job. Wire separation between passes is **mechanical (cut) at a lead-out**, not retraction.
 5. **Directional tangential tool.** The rim is directional; the A axis must point along the path tangent. Because the feeder+wheel rotate together, the leading wire always points along travel.
-6. **Limited rotation.** The A axis is mechanically restricted to **±45° from home** (cooling duct + drive shaft block a full revolution in one pass). **Home heading = +Y**, and **reverse (−Y) deposition is impossible**. Depositable headings are the **+Y-centred ±45° wedge** (travel direction θ ∈ [45°, 135°] measured from +X). Closed perimeters are therefore impossible; fill is fundamentally **unidirectional**.
+6. **Limited rotation — two distinct limits.** The reachable **deposition wedge** is **±90° from +Y home** (`c_axis.wedge_half_angle_deg`): depositable travel headings are θ ∈ [0°, 180°] measured from +X (tangent **dy ≥ 0**). **Home heading = +Y**, and **reverse (−Y) deposition is impossible**, so closed perimeters are impossible and fill is fundamentally **unidirectional**. Separately, the A axis is **mechanically/firmware-adjustable across ±180°** (`c_axis.a_min_deg`/`a_max_deg`; continuous within range, **no full 360°** — cooling duct + drive shaft block a full revolution) so airborne reorientation can use the whole travel. **These are two different numbers, validated separately: deposition must never use ±180° (that points −Y).**
 7. **Lift ≥ ~10 mm** above the last pass height between passes; **shortest practical deposit ~6 mm**; a **lead-out is required** so the wire can be cut after each pass.
 
-> Note: `misc.md` lists an older "deposition direction −X, ±30° drift" parameter set. The **session-established constraint (+Y home, ±45° wedge) supersedes it.** Make `home_heading` and `wedge_half_angle` config values (defaults +Y / 45°) so the doc/firmware discrepancy is resolved in config, not code.
+> Note: `misc.md` lists an older "deposition direction −X, ±30° drift" parameter set. The **session-established constraint (+Y home, ±90° deposition wedge) supersedes it.** `home_heading` and `wedge_half_angle` are config values (machine config: +Y / 90°), with the separate `a_min_deg`/`a_max_deg` mechanical limits, so the doc/firmware discrepancy is resolved in config, not code.
 
 ### 2.1 Default process parameters (Al1100-O, 0.50 mm wire) — all config
 | Parameter | Default | Notes |
@@ -154,14 +154,15 @@ Define `geometry/backend.py::GeometryBackend` (ABC) with `load(path) -> Mesh`, `
 - Travel direction `θ` measured CCW from +X. +Y is θ = 90°.
 - `A_deg = c_axis.invert_sign * (θ_deg - c_axis.home_heading_deg) + c_axis.home_offset_deg`
   - defaults: `home_heading_deg = 90` (+Y), `home_offset_deg = 0`, `invert_sign = +1` → `A_deg = θ_deg - 90`.
-- **Wedge validation (hard):** reject any deposition heading with `abs(A_deg) > c_axis.wedge_half_angle_deg` (default 45). I.e. θ outside [45°, 135°] cannot be deposited.
+- **Wedge validation (hard):** reject any deposition heading with `abs(A_deg) > c_axis.wedge_half_angle_deg` (90 in the machine config). I.e. θ outside [0°, 180°] (tangent dy < 0) cannot be deposited.
+- **Mechanical-range validation (hard, separate):** every commanded A target — deposition **and** airborne reorientation — must lie within `[c_axis.a_min_deg, c_axis.a_max_deg]` (default ±180°). This is the wider mechanical/firmware stop limit; it is *not* the deposition wedge and must never be confused with it.
 - `invert_sign` and `home_offset_deg` must be **calibrated to the physical wheel** (match firmware `M569` direction). Provide a GUI/CLI "jog A and confirm heading" calibration aid.
 
 ### 4.2 Fill strategy
 Because there are **no closed perimeters** and travel is **unidirectional within the +Y wedge**, fill is built from forward passes only:
 
 - **Default — unidirectional raster** (`fill/raster.py`): hatch lines along +Y at pitch `= bead_width * (1 - overlap)` (overlap default 0.15). Each pass: plunge → deposit +Y → lead-out → lift → travel back (wheel up) to the next line's start. **No bidirectional/boustrophedon** (−Y is impossible).
-- **Crosshatch across *layers*** (not within a layer): alternate heading within the wedge between layers (e.g. layer N at +Y+θ, layer N+1 at +Y−θ, with |θ| ≤ 45). Adjacent layers can cross at up to 90°.
+- **Crosshatch across *layers*** (not within a layer): alternate heading within the wedge between layers (e.g. layer N at +Y+θ, layer N+1 at +Y−θ, with |θ| ≤ 90). Adjacent layers can cross at up to 180°.
 - **Curved fill — streamlines** (`fill/streamline.py`): integrate a **+Y-biased guidance field** over the region and trace streamlines, then **clip to the region** with pyclipr. A streamline is depositable only if, **along its whole length**: (a) tangent stays in the wedge, (b) it is monotonic forward (no −Y reversal), (c) length ≥ `min_deposit_len`, and (d) it satisfies the curvature limit (§4.3) **at the pass's single speed**. Where a streamline violates a constraint, **split it** (airborne reorient between sub-passes).
 - **Walls (optional):** offset the region inward by 0.5 mm (pyclipr) and deposit as **wedge-constrained partial arcs**, never closed loops. Default off in v1; raster-only is acceptable for v1.
 
@@ -277,7 +278,8 @@ Revs/mm depends on the **true XY surface speed**; the A-axis rotation must **not
 **This calibration/validation is a required step**, not optional. `E` is already tied to XY length (§5.3), so it is unaffected as long as relative E with explicit per-segment `dE` is used.
 
 ### 6.3 Hard emitter validations (fail the build if any trip)
-- Every deposition heading: `abs(A_deg) ≤ wedge_half_angle`.
+- Every deposition heading: `abs(A_deg) ≤ wedge_half_angle` (the narrow +Y deposition wedge).
+- Every commanded A target (deposition **and** airborne): `a_min_deg ≤ A_deg ≤ a_max_deg` (the wider mechanical travel limit — a separate, distinct bound).
 - Every in-contact move: `xy_speed ≥ v_grind_floor` **and** `dE > 0` (contact invariant).
 - No `G4` dwell while `Z` is at deposition height (all dwells airborne).
 - `E` monotonic non-decreasing across the whole file.
@@ -305,8 +307,10 @@ c_axis:
   home_heading_deg: 90           # +Y
   home_offset_deg: 0
   invert_sign: 1                 # calibrate to M569 direction
-  wedge_half_angle_deg: 45
-  max_speed_deg_s: 0             # MEASURE and set; drives R_min
+  wedge_half_angle_deg: 90       # DEPOSITION wedge (reachable +Y headings); NOT the mechanical limit
+  a_min_deg: -180                # mechanical/firmware travel limit (airborne reorientation)
+  a_max_deg: 180                 # continuous within [-180, 180]; no full 360 deg
+  max_speed_deg_s: 360           # measured on hardware; drives R_min
 spindle:
   rpm_min: 5000
   rpm_max: 30000
@@ -363,7 +367,7 @@ Single window, three regions:
    - A read-out of the **selected operating point** once the CSV is loaded: revs/mm ray, `[v_min, v_max]`, chosen `v`, derived RPM, Φ, predicted torque/power/T_AZ.
    - **A-axis calibration aid:** "Jog A / confirm heading" to set `invert_sign`/`home_offset`.
 2. **Preview (center, matplotlib canvas):**
-   - Per-layer **top-down** view: deposited passes colored by pass, **heading arrows**, the **±45° wedge** drawn at the part, lifts/travels dashed, lead-outs marked.
+   - Per-layer **top-down** view: deposited passes colored by pass, **heading arrows**, the **±90° deposition wedge** drawn at the part, lifts/travels dashed, lead-outs marked.
    - Layer slider; play/scrub. Optional 3D toggle (matplotlib 3D; pyvista if the optional dep is present).
    - **Validation overlay:** highlight any wedge/curvature/collision/contact violations in red with tooltips.
 3. **Actions (bottom):** "Slice", progress, "Save G-code…", optional "Upload to duet3.local". A log pane showing validation results (§6.3).
@@ -477,7 +481,7 @@ Each milestone ends with tests green and a runnable artifact.
 1. Given a test STL + a FRAM screener CSV + the config, the CLI emits valid RRF G-code that passes all §6.3 validations.
 2. **Revs/mm is constant within every pass**, and equals the selected ray (assert from emitted RPM/feed).
 3. **No emitted in-contact move violates the contact invariant**; **no dwell occurs in contact**; **E is monotonic**.
-4. **Every deposition heading is within ±45° of +Y**; every pass satisfies `R ≥ R_min(v)`.
+4. **Every deposition heading is within ±90° of +Y** (and every commanded A within the ±180° mechanical limit); every pass satisfies `R ≥ R_min(v)`.
 5. M2 parity: emitter reproduces the existing `afrb_yline_*` G-code for the same inputs.
 6. The GUI loads a mesh, previews layers with heading arrows + wedge, flags violations, and saves G-code.
 7. `RotoforgeSlicer.exe` and the Linux binary launch by double-click on a clean machine and run a slice end-to-end.

@@ -10,8 +10,9 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 ## Status
 
 **M1–M7 complete** — the full slicer: geometry, straight + curved fill, the process
-window, contact/collision, the GUI, and one-click executables. **Implemented and tested:** config loading, heading<->A-axis mapping and
-the +/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
+window, contact/collision, the GUI, and one-click executables. **Implemented and tested:** config loading, heading<->A-axis mapping, the
+configurable deposition-wedge check (±90° in the machine config) plus the separate
+±180° mechanical A-range check, the curvature/slew limit, extrusion ratios, the
 contact-"grinding" invariant; **M1**: mesh load + repair + planar
 `section_multiplane` slicing -> shapely regions (`geometry/`) + matplotlib preview
 (`gui/preview.py`); **M2**: unidirectional +Y raster fill (`fill/raster.py`),

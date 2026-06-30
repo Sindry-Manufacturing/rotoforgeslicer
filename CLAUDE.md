@@ -35,8 +35,11 @@ build. The emitter must **prove** none are violated (SPEC §6.3):
    subtractive. Use `toolpath.statemachine.assert_contact_invariant`.
 2. **All dwells airborne.** Startup settle (~10 s) and between-pass spindle
    stabilization happen with the wheel lifted — never in contact.
-3. **±45° wedge, +Y only.** Every deposition heading is within ±45° of the +Y
-   home heading (forward only; −Y is impossible). No closed perimeters. Use
+3. **±90° deposition wedge, +Y only.** Every deposition heading is within ±90° of
+   the +Y home heading (tangent dy ≥ 0; forward only; −Y is impossible). No closed
+   perimeters. The A axis travels ±180° **mechanically** (`a_min_deg`/`a_max_deg`,
+   for airborne reorientation), but **deposition stays inside the wedge — never
+   ±180°** (that points −Y). The two limits are validated separately. Use
    `fill.wedge`.
 4. **Monotonic E.** Wire never retracts. Pass-to-pass separation is a mechanical
    cut at a lead-out, not negative E.

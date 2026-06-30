@@ -109,6 +109,7 @@ class GCodeEmitter:
 
         lines: List[str] = []
         coords: List[tuple] = []           # (x, y, z) of every move endpoint
+        a_seq: List[float] = []            # every commanded A target (deposition + airborne)
         dwell_records = []                 # (dwell_z, layer_z) for every G4 (must be airborne)
         e_seq: List[float] = [0.0]         # cumulative E across the file
         e_cum = 0.0
@@ -123,6 +124,7 @@ class GCodeEmitter:
                 parts.append(f"Z{_fmt(z)}")
             if a is not None:
                 parts.append(f"{A}{_fmt(a)}")
+                a_seq.append(a)
             if e is not None:
                 parts.append(f"E{e:.5f}")
             if f is not None:
@@ -253,6 +255,7 @@ class GCodeEmitter:
         self._validate_spindle_in_range(plan, cfg.spindle)
         self._validate_no_dwell_airborne(dwell_records, plan)
         self._validate_in_build_volume(coords, bx, by, bz)
+        self._validate_a_in_mechanical_range(a_seq, cfg.c_axis)
 
         return "\n".join(lines) + "\n"
 
@@ -276,13 +279,14 @@ class GCodeEmitter:
 
     @staticmethod
     def _validate_pass_geometry(p, v_mm_min: float, cfg: Config) -> None:
-        """SPEC §6.3: every deposition segment heading is in the wedge (and within the
-        hard mechanical +/- range), and the whole pass holds R >= R_min(v) (§4.3)."""
-        wedge = cfg.c_axis.wedge_half_angle_deg
+        """SPEC §6.3: every deposition segment heading is inside the DEPOSITION wedge
+        (the narrow +Y-forward limit, ``wedge_half_angle_deg``), and the whole pass
+        holds R >= R_min(v) (§4.3). The wider mechanical travel range
+        (``a_min_deg``/``a_max_deg``) is a separate, file-wide check that also covers
+        airborne A targets — see ``_validate_a_in_mechanical_range``. These are two
+        distinct limits: deposition must never reach ±180° (that points −Y)."""
         for a in p.segment_a_degs(cfg.c_axis):
             validate_heading(a, cfg.c_axis)
-            if abs(a) > wedge + 1e-9:
-                raise ValueError(f"A={a:.2f} exceeds the mechanical +/-{wedge} deg range")
         r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
         if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
             raise ValueError(
@@ -326,6 +330,20 @@ class GCodeEmitter:
                     raise ValueError(
                         f"M3 S{p.rpm} outside the SuperPID window "
                         f"[{spindle.rpm_min},{spindle.rpm_max}] (SPEC §1.3)")
+
+    @staticmethod
+    def _validate_a_in_mechanical_range(a_values, c_axis, tol: float = 1e-6) -> None:
+        """SPEC §6.3: every commanded A target — deposition AND airborne reorientation
+        — lies within the mechanical/firmware travel limit [a_min_deg, a_max_deg]. This
+        is the wider, distinct sibling of the deposition-wedge check: the wheel cannot
+        wrap past these stops. (Deposition headings are additionally bounded to the much
+        narrower ±wedge by ``validate_heading``.)"""
+        lo, hi = c_axis.a_min_deg, c_axis.a_max_deg
+        for a in a_values:
+            if not (lo - tol <= a <= hi + tol):
+                raise ValueError(
+                    f"A={a:.2f} deg outside mechanical travel range [{lo},{hi}] — the "
+                    "wheel cannot wrap past its stops (SPEC §2 item 6 / §6.3)")
 
     @staticmethod
     def _validate_in_build_volume(coords, bx, by, bz, tol: float = 1e-6) -> None:

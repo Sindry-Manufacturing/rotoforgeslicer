@@ -1,9 +1,10 @@
 """Matplotlib per-layer toolpath / region preview. SPEC §9.
 
 M1 ships the Qt-independent plotting helpers (``plot_layer`` renders a sliced
-layer's region polygons, holes included, with an optional ±45° deposition-wedge
-overlay). The embedded Qt canvas (``make_preview_canvas``) is wired in M6 and will
-reuse these helpers.
+layer's region polygons, holes included, with an optional deposition-wedge overlay
+of ±``wedge_half_angle_deg`` about the home heading — ±90° in the machine config).
+The embedded Qt canvas (``make_preview_canvas``) is wired in M6 and will reuse these
+helpers.
 
 matplotlib is imported lazily so the light core stays import-cheap (CLAUDE.md).
 These functions never call ``pyplot.show`` and work headless (Agg).

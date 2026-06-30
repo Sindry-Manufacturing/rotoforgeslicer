@@ -3,7 +3,7 @@
 A thin wrapper over the same pipeline the CLI uses: open a mesh + optional process
 CSV, tweak the key process fields, Slice (off the UI thread), then scrub layers with a
 slider and inspect the toolpath (deposition vectors, lead-outs/wire-cuts, resets, the
-+/-45 wedge, and any collisions) with mouse zoom/pan. Save the validated G-code.
+depositable +/-wedge, and any collisions) with mouse zoom/pan. Save the validated G-code.
 
 PySide6 / matplotlib are imported lazily so importing the package stays light.
 """

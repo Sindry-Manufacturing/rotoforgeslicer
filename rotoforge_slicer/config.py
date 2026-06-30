@@ -35,7 +35,9 @@ class CAxisCfg:
     home_heading_deg: float = 90.0
     home_offset_deg: float = 0.0
     invert_sign: int = 1
-    wedge_half_angle_deg: float = 45.0
+    wedge_half_angle_deg: float = 45.0   # DEPOSITION wedge (reachable +Y headings); NOT the mechanical limit
+    a_min_deg: float = -180.0            # mechanical/firmware travel limit (airborne positioning)
+    a_max_deg: float = 180.0             # continuous within [a_min_deg, a_max_deg]; no full 360 deg
     max_speed_deg_s: float = 0.0
 
 
