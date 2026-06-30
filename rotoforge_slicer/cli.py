@@ -27,6 +27,16 @@ def main(argv=None) -> int:
 
     from .pipeline import slice_mesh  # lazy: pulls heavy deps
     try:
+        if args.screener:  # echo the selected operating point (SPEC §9 read-out)
+            from .config import load_config
+            from .process.screener import select_operating_point
+
+            cfg = load_config(args.config)
+            op = select_operating_point(
+                args.screener, mode=cfg.screener.revs_per_mm_mode,
+                target=cfg.screener.revs_per_mm_target, tol=cfg.screener.revs_per_mm_tol,
+                rpm_min=cfg.spindle.rpm_min, rpm_max=cfg.spindle.rpm_max)
+            print(op.summary())
         gcode = slice_mesh(args.mesh, args.config, args.screener, out)
     except NotImplementedError as e:
         print(f"[not yet implemented] {e}", file=sys.stderr)

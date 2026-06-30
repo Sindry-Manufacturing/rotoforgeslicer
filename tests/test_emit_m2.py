@@ -87,15 +87,15 @@ def test_emit_raises_grinding_when_not_feeding(tmp_path):
         GCodeEmitter(cfg).emit(plan)
 
 
-def test_no_dwell_in_contact_validator_is_falsifiable(tmp_path):
+def test_no_dwell_airborne_validator_is_falsifiable(tmp_path):
     cfg = load_config(CFG)
     plan = _box_plan(tmp_path, cfg)
     em = GCodeEmitter(cfg)
     dep_z = plan.nonempty_layers[0].z
     with pytest.raises(ValueError):
-        em._validate_no_dwell_in_contact([dep_z], plan)        # dwell at deposition Z
-    em._validate_no_dwell_in_contact(                          # airborne dwell is fine
-        [dep_z + cfg.process.inter_pass_lift_mm], plan)
+        em._validate_no_dwell_airborne([(dep_z, dep_z)], plan)   # dwell at the layer Z
+    em._validate_no_dwell_airborne(                              # lifted dwell is fine
+        [(dep_z + cfg.process.inter_pass_lift_mm, dep_z)], plan)
 
 
 def test_emit_holed_part_keeps_e_monotonic_and_in_wedge(tmp_path):

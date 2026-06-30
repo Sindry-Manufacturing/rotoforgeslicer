@@ -72,6 +72,21 @@ def test_e_per_path_mode_selection(mode):
         assert math.isclose(e, expected)
 
 
+def test_screener_e_per_path_is_feed_over_traverse():
+    """screener E coupling = feed_speed/traverse, distinct from x (1.0) / volume (~0.61)."""
+    from rotoforge_slicer.process.screener import OperatingPoint
+
+    cfg = Config()  # extrusion.mode defaults to "screener"
+    op = OperatingPoint(
+        revs_per_mm=150.0, v_min_mm_min=60.0, v_max_mm_min=140.0, rpm=15000,
+        traverse_mm_min=100.0, feed_speed_mm_min=130.0, phi=1.3,
+        torque_Nm=1.3, power_kW=0.9, t_az_c=460.0)
+    plan = plan_toolpath(_model(), cfg, operating_point=op)
+    e = plan.layers[0].passes[0].e_per_path_mm
+    assert math.isclose(e, 130.0 / 100.0)            # 1.3 — screener-derived
+    assert not math.isclose(e, cfg.extrusion.x_ratio)  # not the x-fallback
+
+
 def test_screener_operating_point_drives_traverse_and_revs_per_mm():
     """A supplied operating point sets the pass traverse/RPM, not cfg.emit defaults."""
     from rotoforge_slicer.process.screener import OperatingPoint

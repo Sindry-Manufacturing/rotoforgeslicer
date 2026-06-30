@@ -82,7 +82,7 @@ class GCodeEmitter:
 
         lines: List[str] = []
         coords: List[tuple] = []           # (x, y, z) of every move endpoint
-        dwell_at_dep_z = []                # z of any G4 (must be airborne)
+        dwell_records = []                 # (dwell_z, layer_z) for every G4 (must be airborne)
         e_seq: List[float] = [0.0]         # cumulative E across the file
         e_cum = 0.0
 
@@ -106,7 +106,8 @@ class GCodeEmitter:
 
         # ---- header + preamble ----
         nlay = len(plan.nonempty_layers)
-        lines.append("; Rotoforge Slicer — M2 straight-fill (SPEC §6); afrb_yline parity deferred")
+        lines.append("; Rotoforge Slicer — straight-fill + process window (SPEC §6); "
+                     "afrb_yline parity deferred")
         lines.append(
             f"; passes={plan.npasses} layers={nlay} rpm={plan.rpm} "
             f"traverse={plan.traverse_mm_min:g}mm/min revs_per_mm={plan.revs_per_mm:.4f}")
@@ -122,14 +123,12 @@ class GCodeEmitter:
             return "\n".join(lines) + "\n"
 
         first_lift_z = body[0].z + lift
-        # get to clearance, spin up + settle (airborne) before any contact
+        # Rise to clearance before any contact. The spindle is brought to each pass's
+        # RPM airborne inside the per-pass loop (SPEC §4.5: RPM changes only between
+        # passes, airborne — the SuperPID can't be chased mid-move).
         move("G0", z=first_lift_z, f=f_z, cur_z=first_lift_z)
         cur_z = first_lift_z
-        if not dry:
-            lines.append(f"M3 S{plan.rpm}        ; spindle to target (airborne)")
-            if cfg.process.startup_settle_ms > 0:
-                lines.append(f"G4 P{cfg.process.startup_settle_ms}   ; airborne startup settle")
-                dwell_at_dep_z.append(cur_z)
+        cur_rpm = None
 
         # ---- body: per layer, per pass ----
         for ly in body:
@@ -164,11 +163,25 @@ class GCodeEmitter:
                     move("G0", z=lift_z, f=f_z, cur_z=lift_z)
                     cur_z = lift_z
                 move("G0", x=x, y=y0, a=a, f=f_travel, cur_z=cur_z)
-                # 2. airborne rapid descent to a small clearance above the surface
+
+                # 2. RPM placement (SPEC §4.5/§6.1): set the spindle airborne ONLY when
+                #    it changes between passes — never chase RPM mid-move. Long settle on
+                #    the first spin-up; short stabilization dwell on later hops.
+                if not dry and p.rpm != cur_rpm:
+                    first = cur_rpm is None
+                    lines.append(f"M3 S{p.rpm}        ; spindle to target (airborne)")
+                    settle = cfg.process.startup_settle_ms if first else cfg.process.spindle_dwell_ms
+                    if settle > 0:
+                        tag = "startup settle" if first else "spindle stabilize"
+                        lines.append(f"G4 P{settle}   ; airborne {tag}")
+                        dwell_records.append((cur_z, ly.z))  # cur_z == lift_z -> airborne
+                    cur_rpm = p.rpm
+
+                # 3. airborne rapid descent to a small clearance above the surface
                 move("G0", z=approach_z, f=f_z, cur_z=approach_z)
                 cur_z = approach_z
 
-                # 3. TRANSITION_IN: moving plunge — descend the last `approach` mm while
+                # 4. TRANSITION_IN: moving plunge — descend the last `approach` mm while
                 #    moving forward `plunge` mm, E feeding. F-compensated so the realized
                 #    XY speed == traverse (>= grind floor).
                 move("G1", x=x, y=y_pl, z=ly.z, a=a,
@@ -182,7 +195,7 @@ class GCodeEmitter:
                         in_contact=True, xy_speed_mm_s=v_s,
                         v_grind_floor_mm_s=floor_s, e_feeding=de_plunge > 0)
 
-                # 4. DEPOSITING: steady forward move (pure +Y, ΔZ=ΔA=0 -> F == XY speed)
+                # 5. DEPOSITING: steady forward move (pure +Y, ΔZ=ΔA=0 -> F == XY speed)
                 move("G1", x=x, y=y1, a=a,
                      e=None if dry else de_steady, f=f_dep, cur_z=cur_z)
                 if not dry:
@@ -192,7 +205,7 @@ class GCodeEmitter:
                         in_contact=True, xy_speed_mm_s=v_s,
                         v_grind_floor_mm_s=floor_s, e_feeding=de_steady > 0)
 
-                # 5. TRANSITION_OUT: continue fwd through lead-out while lifting; E stops
+                # 6. TRANSITION_OUT: continue fwd through lead-out while lifting; E stops
                 move("G1", x=x, y=y1 + lead_out, z=lift_z, f=f_z, cur_z=lift_z)
                 cur_z = lift_z  # wire cut at the lead-out (mechanical runout)
 
@@ -203,8 +216,9 @@ class GCodeEmitter:
 
         # ---- §6.3 whole-file validations ----
         validate_monotonic_e(e_seq)
-        self._validate_pass_uniformity(plan)
-        self._validate_no_dwell_in_contact(dwell_at_dep_z, plan)
+        self._validate_constant_revs_per_mm(plan)
+        self._validate_spindle_in_range(plan, cfg.spindle)
+        self._validate_no_dwell_airborne(dwell_records, plan)
         self._validate_in_build_volume(coords, bx, by, bz)
 
         return "\n".join(lines) + "\n"
@@ -228,22 +242,42 @@ class GCodeEmitter:
     # ---- validators ---------------------------------------------------------
 
     @staticmethod
-    def _validate_pass_uniformity(plan) -> None:
-        """SPEC §6.3: a single RPM and a single traverse per pass (constant revs/mm)."""
+    def _validate_constant_revs_per_mm(plan, rel_tol: float = 1e-3) -> None:
+        """SPEC §6.3 / acceptance 2: revs/mm is constant within every pass and equals
+        the selected ray. A ``Pass`` holds scalar rpm+traverse (single-valued within a
+        pass by construction); RPM may differ *between* passes, but every pass must sit
+        on the plan's revs/mm ray."""
+        ray = plan.revs_per_mm
         for ly in plan.layers:
             for p in ly.passes:
-                if p.rpm != plan.rpm or p.traverse_mm_min != plan.traverse_mm_min:
+                if p.traverse_mm_min <= 0:
+                    raise ValueError(f"pass has non-positive traverse {p.traverse_mm_min}")
+                rpm_per_v = p.rpm / p.traverse_mm_min
+                if ray > 0 and abs(rpm_per_v - ray) > rel_tol * ray:
                     raise ValueError(
-                        "pass RPM/traverse differs from the plan's single operating "
-                        f"point (rpm {p.rpm} vs {plan.rpm}, v {p.traverse_mm_min} vs "
-                        f"{plan.traverse_mm_min}) — revs/mm would not be constant")
+                        f"pass revs/mm {rpm_per_v:.4f} != selected ray {ray:.4f} — RPM may "
+                        "change between passes but must hold the constant revs/mm ray")
 
-    def _validate_no_dwell_in_contact(self, dwell_zs, plan) -> None:
-        """SPEC §6.3: no G4 dwell at a deposition Z (all dwells airborne)."""
-        dep_zs = {round(ly.z, 6) for ly in plan.nonempty_layers}
-        for z in dwell_zs:
-            if round(z, 6) in dep_zs:
-                raise ValueError(f"G4 dwell at deposition Z={z} (must be airborne)")
+    @staticmethod
+    def _validate_no_dwell_airborne(dwell_records, plan, clearance: float = 1e-6) -> None:
+        """SPEC §6.3 / §2.2: every G4 dwell is airborne — strictly above the layer it is
+        lifting from. Checking ``dwell_z > layer_z`` (rather than ``!= any deposition Z``)
+        is robust to a lift height that happens to coincide with another layer's Z."""
+        for dwell_z, layer_z in dwell_records:
+            if dwell_z <= layer_z + clearance:
+                raise ValueError(
+                    f"G4 dwell at Z={dwell_z} is not airborne above layer Z={layer_z} "
+                    "(all dwells must happen with the wheel lifted)")
+
+    @staticmethod
+    def _validate_spindle_in_range(plan, spindle) -> None:
+        """SPEC §1.3/§6.3: every commanded RPM is within the SuperPID window."""
+        for ly in plan.layers:
+            for p in ly.passes:
+                if not (spindle.rpm_min <= p.rpm <= spindle.rpm_max):
+                    raise ValueError(
+                        f"M3 S{p.rpm} outside the SuperPID window "
+                        f"[{spindle.rpm_min},{spindle.rpm_max}] (SPEC §1.3)")
 
     @staticmethod
     def _validate_in_build_volume(coords, bx, by, bz, tol: float = 1e-6) -> None:

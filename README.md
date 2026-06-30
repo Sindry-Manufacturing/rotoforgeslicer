@@ -9,19 +9,19 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 
 ## Status
 
-Scaffold + **M1 (geometry) and M2 (straight fill + emitter) complete.**
-**Implemented and tested:** config loading, heading<->A-axis mapping and the
-+/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
-contact-"grinding" invariant, screener operating-point selection; **M1**: mesh
-load + repair + planar `section_multiplane` slicing -> shapely regions
-(`geometry/`) + matplotlib preview (`gui/preview.py`); **M2**: unidirectional +Y
-raster fill (`fill/raster.py`), constant-(v,RPM) straight-pass planning
-(`toolpath/passplan.py`), bed placement, and a SPEC-compliant RRF emitter
-(`emit/rrf.py`) that proves the §6.3 invariants (wedge, contact/no-grinding,
-monotonic E, airborne dwells, single RPM+traverse, in-build-volume). `rotoforge-slice
-mesh.stl` now writes a `.gcode`. **Stubbed** (next, per the spec): the process-window
-RPM/feed per region (M3), 2.5D collision/lead-out approach (M4), curved streamline
-fill + cross-layer crosshatch (M5), and the GUI (M6).
+Scaffold + **M1 (geometry), M2 (straight fill + emitter), and M3 (process window)
+complete.** **Implemented and tested:** config loading, heading<->A-axis mapping and
+the +/-45 deg wedge check, the curvature/slew limit, extrusion ratios, the
+contact-"grinding" invariant; **M1**: mesh load + repair + planar
+`section_multiplane` slicing -> shapely regions (`geometry/`) + matplotlib preview
+(`gui/preview.py`); **M2**: unidirectional +Y raster fill (`fill/raster.py`),
+constant-(v,RPM) straight-pass planning (`toolpath/passplan.py`), bed placement, and a
+SPEC-compliant RRF emitter (`emit/rrf.py`) that proves the §6.3 invariants; **M3**: the
+FRAM screener handshake (`process/screener.py`) — CSV -> widest-contiguous revs/mm ray
+-> operating point -> per-pass **airborne RPM placement** + screener E coupling, with a
+CLI operating-point read-out (`rotoforge-slice mesh.stl -s window.csv`). **Stubbed**
+(next, per the spec): 2.5D collision/lead-out approach (M4), curved streamline fill +
+cross-layer crosshatch (M5), and the GUI (M6).
 
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
 > `afrb_playground_gui(2).py` generator are not in the repo; the only existing
@@ -49,7 +49,7 @@ rotoforge_slicer/      package
   geometry/            load + repair + planar slice + place [M1 done]
   fill/                wedge, raster, streamline, curvature [wedge+curvature+raster done]
   toolpath/            state machine, pass plan, collision  [invariant+passplan done]
-  process/             screener CSV, extrusion              [done]
+  process/             screener CSV, extrusion              [M3 done]
   emit/                RRF G-code emitter, templates        [M2 emitter done]
   gui/                 PySide6 app + matplotlib preview     [stub]
 config/                machine_duet3.yaml

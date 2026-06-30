@@ -49,7 +49,8 @@ def slice_mesh(mesh_path: str, config_path: str,
 
         op = select_operating_point(
             screener_csv, mode=cfg.screener.revs_per_mm_mode,
-            target=cfg.screener.revs_per_mm_target, tol=cfg.screener.revs_per_mm_tol)
+            target=cfg.screener.revs_per_mm_target, tol=cfg.screener.revs_per_mm_tol,
+            rpm_min=cfg.spindle.rpm_min, rpm_max=cfg.spindle.rpm_max)
 
     from .emit.rrf import GCodeEmitter
     from .toolpath.passplan import plan_toolpath
