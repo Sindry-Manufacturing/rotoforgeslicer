@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from ..config import Config
+from ..fill.curvature import min_radius
 from ..fill.raster import raster_lines, raster_pitch
 from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, in_wedge
 from ..process.extrusion import e_per_path_mm
@@ -23,15 +24,37 @@ from ..process.screener import OperatingPoint
 
 @dataclass
 class Pass:
-    """One forward deposition pass (a straight segment for M2)."""
+    """One forward deposition pass at a single operating point.
+
+    A straight pass is two points (``[start, end]``); a curved streamline pass
+    (M5) carries a full ``points`` polyline. The heading — and therefore the rotary
+    A angle — is constant within each *segment* but may change between segments.
+    """
 
     start: tuple          # (x, y) plunge point
     end: tuple            # (x, y) deposition end (lead-out begins here)
     z: float              # deposition Z
-    a_deg: float          # rotary axis angle for the heading (constant for a straight pass)
+    a_deg: float          # rotary A for the FIRST segment's heading
     rpm: int
     traverse_mm_min: float
     e_per_path_mm: float
+    points: Optional[list] = None   # full polyline; None => straight [start, end]
+
+    def __post_init__(self):
+        if self.points is None:
+            self.points = [tuple(self.start), tuple(self.end)]
+
+    @classmethod
+    def curved(cls, points, *, z, rpm, traverse_mm_min, e_per_path_mm, c_axis):
+        pts = [tuple(p) for p in points]
+        h0 = heading_deg_from_vector(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
+        return cls(start=pts[0], end=pts[-1], z=z,
+                   a_deg=heading_to_a_deg(h0, c_axis), rpm=rpm,
+                   traverse_mm_min=traverse_mm_min, e_per_path_mm=e_per_path_mm, points=pts)
+
+    @property
+    def is_curved(self) -> bool:
+        return len(self.points) > 2
 
     @property
     def heading_deg(self) -> float:
@@ -40,11 +63,25 @@ class Pass:
 
     @property
     def length_mm(self) -> float:
-        return math.hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
+        return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in self.segments())
 
     @property
     def e_total_mm(self) -> float:
         return self.e_per_path_mm * self.length_mm
+
+    @property
+    def min_radius_mm(self) -> float:
+        return min_radius(self.points)
+
+    def segments(self):
+        return list(zip(self.points, self.points[1:]))
+
+    def segment_headings_deg(self) -> List[float]:
+        return [heading_deg_from_vector(b[0] - a[0], b[1] - a[1])
+                for a, b in self.segments()]
+
+    def segment_a_degs(self, c_axis) -> List[float]:
+        return [heading_to_a_deg(h, c_axis) for h in self.segment_headings_deg()]
 
 
 @dataclass
@@ -142,43 +179,71 @@ def _heading_unit(start, end):
     return (dx / n, dy / n) if n else (0.0, 1.0)
 
 
+def _polyline_len(pts) -> float:
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
+
+
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                e_per_path: float, heading_deg: float = 90.0) -> LayerPlan:
-    """Build the straight +Y passes for one sliced layer (SPEC §4.2/§4.5)."""
+    """Build one layer's passes — straight +Y raster, or curved streamlines (SPEC §4.2)."""
     a_deg = heading_to_a_deg(heading_deg, cfg.c_axis)
     if not in_wedge(a_deg, cfg.c_axis):
         raise ValueError(
-            f"raster heading {heading_deg} deg -> A={a_deg:.1f} deg outside the "
+            f"fill heading {heading_deg} deg -> A={a_deg:.1f} deg outside the "
             f"+/-{cfg.c_axis.wedge_half_angle_deg} deg wedge (SPEC §4.1)")
 
-    pitch = raster_pitch(cfg)
+    op = operating_point
+    min_len = cfg.process.min_deposit_len_mm
     passes: List[Pass] = []
-    for region in layer.regions:
-        segs = raster_lines(region, pitch, heading_deg=heading_deg,
-                            min_len=cfg.process.min_deposit_len_mm)
-        for start, end in segs:
-            passes.append(Pass(
-                start=start, end=end, z=layer.z, a_deg=a_deg,
-                rpm=operating_point.rpm,
-                traverse_mm_min=operating_point.traverse_mm_min,
-                e_per_path_mm=e_per_path,
-            ))
+
+    if cfg.fill.mode == "streamline":
+        from ..fill.curvature import split_on_curvature
+        from ..fill.streamline import streamline_fill
+
+        v_s = op.traverse_mm_min / 60.0
+        for region in layer.regions:
+            for path in streamline_fill(region, cfg, heading_deg=heading_deg):
+                # break where the turn is tighter than the slew limit allows (SPEC §4.3)
+                for sub in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
+                    if _polyline_len(sub) >= min_len:
+                        passes.append(Pass.curved(
+                            sub, z=layer.z, rpm=op.rpm,
+                            traverse_mm_min=op.traverse_mm_min,
+                            e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+    else:  # raster
+        pitch = raster_pitch(cfg)
+        for region in layer.regions:
+            for start, end in raster_lines(region, pitch, heading_deg=heading_deg,
+                                           min_len=min_len):
+                passes.append(Pass(
+                    start=start, end=end, z=layer.z, a_deg=a_deg, rpm=op.rpm,
+                    traverse_mm_min=op.traverse_mm_min, e_per_path_mm=e_per_path))
+
     # Pass ordering (SPEC §4.6): lead away from already-laid material.
     passes = order_passes_lead_away(passes)
     return LayerPlan(index=layer.index, z=layer.z, passes=passes)
 
 
+def layer_heading_deg(cfg: Config, layer_index: int, base_deg: float = 90.0) -> float:
+    """Per-layer deposition heading. With crosshatch on, alternate +/- the crosshatch
+    angle about +Y between layers so adjacent layers cross (SPEC §4.2)."""
+    if not cfg.fill.crosshatch:
+        return base_deg
+    theta = cfg.fill.crosshatch_angle_deg
+    return base_deg + (theta if layer_index % 2 == 0 else -theta)
+
+
 def plan_toolpath(model, cfg: Config, *,
                   operating_point: Optional[OperatingPoint] = None,
                   heading_deg: float = 90.0) -> ToolpathPlan:
-    """Plan every layer of a SlicedModel into constant-(v, RPM) straight passes."""
+    """Plan every layer into constant-(v, RPM) passes (raster or streamline; SPEC §4.2/§4.5)."""
     has_screener = operating_point is not None
     op = operating_point or default_operating_point(cfg)
     e_pp = _e_per_path(cfg, op, has_screener)
 
     layers = [
         plan_layer(layer, cfg, operating_point=op, e_per_path=e_pp,
-                   heading_deg=heading_deg)
+                   heading_deg=layer_heading_deg(cfg, layer.index, heading_deg))
         for layer in model.layers
     ]
     return ToolpathPlan(

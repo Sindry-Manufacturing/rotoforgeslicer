@@ -18,7 +18,7 @@ c_axis:
   home_offset_deg: 0
   invert_sign: 1                 # +1 or -1; calibrate to firmware M569 direction
   wedge_half_angle_deg: 45       # depositable headings: +Y +/- 45 deg
-  max_speed_deg_s: 0.0           # MEASURE on hardware; 0 => R_min = inf (no curve limit set yet)
+  max_speed_deg_s: 360.0         # measured on hardware: 360 deg/s -> R_min = v/omega
 
 spindle:
   rpm_min: 5000
@@ -68,3 +68,10 @@ collision:                       # 2.5D swept-disc + leading-wire check (SPEC §
   cell_mm: 0.0                   # height-field cell; 0 => bead_width/2
   clearance_mm: 0.3              # required gap between the 50 mm disc body and existing material
   wire_lead_mm: 2.0              # how far the fragile leading wire reaches ahead of contact
+
+fill:                            # fill strategy (SPEC §4.2)
+  mode: raster                   # raster | streamline
+  crosshatch: false              # alternate the deposition heading between layers
+  crosshatch_angle_deg: 30.0     # +/- offset from +Y on alternating layers (<= wedge half-angle)
+  streamline_step_mm: 0.5        # streamline integration step
+  streamline_curl: 0.6           # 0 = straight +Y; higher = follows the region boundary more

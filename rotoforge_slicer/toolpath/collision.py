@@ -121,7 +121,16 @@ def _heading_unit(start, end):
 
 def check_pass(field: HeightField, p, cfg, *, index: int = 0) -> Optional[Collision]:
     """Return a Collision if depositing ``p`` would drive the leading wire or the disc
-    body into existing material, anywhere along the swept move (start→end), else None."""
+    body into existing material, anywhere along the swept move, else None. Curved passes
+    are checked segment by segment, each with its own heading (SPEC §4.6)."""
+    for (s, e) in p.segments():
+        c = _check_segment(field, s, e, p.z, cfg, index)
+        if c is not None:
+            return c
+    return None
+
+
+def _check_segment(field, s, e, z, cfg, index) -> Optional[Collision]:
     import numpy as np
 
     lh = cfg.process.layer_height_mm
@@ -129,16 +138,15 @@ def check_pass(field: HeightField, p, cfg, *, index: int = 0) -> Optional[Collis
     rim_half = cfg.process.bead_width_mm / 2.0
     clearance = cfg.collision.clearance_mm
     wire_lead = cfg.collision.wire_lead_mm
-    z = p.z
-    # Only material risen ABOVE the current layer is an obstruction. In strict
-    # bottom-up deposition everything is <= z, so this is 0 for normal parts; the
-    # adjacent bead OVERLAP (which sits at z) and the substrate (below z) are not
-    # crashes. ``tol`` keeps same-layer material (and coarse-cell bleed) from flagging.
+    # Only material risen ABOVE the current layer is an obstruction. In strict bottom-up
+    # deposition everything is <= z, so this is 0 for normal parts; the adjacent bead
+    # OVERLAP (at z) and the substrate (below z) are not crashes. ``tol`` keeps same-layer
+    # material (and coarse-cell bleed) from flagging.
     tol = 0.5 * lh
-    hx, hy = _heading_unit(p.start, p.end)
-    (sx, sy), (ex, ey) = p.start, p.end
+    hx, hy = _heading_unit(s, e)
+    (sx, sy), (ex, ey) = s, e
 
-    # contact points swept along the move (SPEC §4.6), ~ one per bead width
+    # contact points swept along the segment (SPEC §4.6), ~ one per bead width
     seg_len = math.hypot(ex - sx, ey - sy)
     step = max(field.cell, cfg.process.bead_width_mm)
     nc = max(2, int(math.ceil(seg_len / step)) + 1)
@@ -196,7 +204,8 @@ def replay_collision_check(plan, cfg) -> List[Collision]:
             c = check_pass(field, p, cfg, index=idx)
             if c is not None:
                 out.append(c)
-            field.deposit_segment(p.start, p.end, half, p.z)
+            for (s, e) in p.segments():        # deposit the whole polyline (curved-safe)
+                field.deposit_segment(s, e, half, p.z)
             idx += 1
     return out
 
@@ -219,12 +228,16 @@ def assert_no_collisions(plan, cfg) -> List[Collision]:
 
 
 def _plan_xy_bounds(plan):
+    # Every polyline vertex, not just the chord endpoints: a curved pass can bow well
+    # outside its start->end chord, and material that lands outside the height-field
+    # window is silently dropped (heights_at -> 0) and would weaken the check.
     xs: List[float] = []
     ys: List[float] = []
     for ly in plan.layers:
         for p in ly.passes:
-            xs += [p.start[0], p.end[0]]
-            ys += [p.start[1], p.end[1]]
+            for (x, y) in p.points:
+                xs.append(x)
+                ys.append(y)
     if not xs:
         return None
     return min(xs), min(ys), max(xs), max(ys)

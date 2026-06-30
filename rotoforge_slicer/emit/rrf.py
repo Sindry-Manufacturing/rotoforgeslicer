@@ -17,7 +17,8 @@ import math
 from typing import Iterable, List
 
 from ..config import CAxisCfg, Config
-from ..fill.wedge import in_wedge
+from ..fill.curvature import r_min
+from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, in_wedge
 from ..toolpath.statemachine import assert_contact_invariant  # noqa: F401 (re-exported)
 from . import templates
 
@@ -44,6 +45,32 @@ def _fmt(v: float) -> str:
     if s in ("", "-0"):
         return "0"
     return s
+
+
+def _split_polyline(pts, dist):
+    """(point at ``dist`` along the polyline, [that point, ...rest])."""
+    if dist <= 1e-9:
+        return pts[0], list(pts)
+    acc = 0.0
+    for i in range(len(pts) - 1):
+        (ax, ay), (bx, by) = pts[i], pts[i + 1]
+        seg = math.hypot(bx - ax, by - ay)
+        if acc + seg >= dist:
+            t = (dist - acc) / seg if seg > 0 else 0.0
+            pp = (ax + t * (bx - ax), ay + t * (by - ay))
+            return pp, [pp] + list(pts[i + 1:])
+        acc += seg
+    return pts[-1], [pts[-1]]
+
+
+def _unit(p0, p1):
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    n = math.hypot(dx, dy)
+    return (dx / n, dy / n) if n else (0.0, 1.0)
+
+
+def _seg_a(p0, p1, c_axis) -> float:
+    return heading_to_a_deg(heading_deg_from_vector(p1[0] - p0[0], p1[1] - p0[1]), c_axis)
 
 
 def _compensated_feed(target_xy_mm_min: float, l_xy: float, l_3d: float) -> float:
@@ -135,34 +162,23 @@ class GCodeEmitter:
             lift_z = ly.z + lift
             approach_z = ly.z + approach
             for p in ly.passes:
-                x, y0 = p.start
-                _, y1 = p.end
-                a = p.a_deg
+                pts = p.points                 # polyline (straight = 2 points)
                 v = p.traverse_mm_min          # this pass's traverse (operating point)
                 v_s = v / 60.0                 # mm/s, for the contact check
                 f_dep = int(round(v))
-                length = p.length_mm
-                # plunge consumes lead_in of the deposit length (keep a steady seg)
-                plunge = min(lead_in, 0.5 * length)
-                y_pl = y0 + plunge
-                de_plunge = p.e_per_path_mm * plunge
-                de_steady = p.e_per_path_mm * (y1 - y_pl)
-                # F that keeps the plunge's XY surface speed at the traverse despite
-                # its small Z descent (SPEC §6.2) — otherwise it would grind (§4.4).
-                f_plunge = _compensated_feed(v, plunge, math.hypot(plunge, approach))
 
-                # every deposition heading must be in the wedge (SPEC §6.3); also hold
-                # the hard mechanical +/-wedge bound on the absolute A value.
-                validate_heading(a, cfg.c_axis)
-                if abs(a) > cfg.c_axis.wedge_half_angle_deg + 1e-9:
-                    raise ValueError(
-                        f"A={a:.2f} exceeds the mechanical +/-{cfg.c_axis.wedge_half_angle_deg} deg range")
+                # §6.3: every segment heading in the wedge + hard mechanical bound, and
+                # the whole pass within the curvature limit at its single speed (§4.3).
+                self._validate_pass_geometry(p, v, cfg)
 
-                # 1. airborne reposition (wheel up) to the plunge start, heading set
+                start = pts[0]
+                a_first = _seg_a(pts[0], pts[1], cfg.c_axis)
+
+                # 1. airborne reposition (wheel up) to the pass start, first heading set
                 if cur_z != lift_z:
                     move("G0", z=lift_z, f=f_z, cur_z=lift_z)
                     cur_z = lift_z
-                move("G0", x=x, y=y0, a=a, f=f_travel, cur_z=cur_z)
+                move("G0", x=start[0], y=start[1], a=a_first, f=f_travel, cur_z=cur_z)
 
                 # 2. RPM placement (SPEC §4.5/§6.1): set the spindle airborne ONLY when
                 #    it changes between passes — never chase RPM mid-move. Long settle on
@@ -181,32 +197,49 @@ class GCodeEmitter:
                 move("G0", z=approach_z, f=f_z, cur_z=approach_z)
                 cur_z = approach_z
 
-                # 4. TRANSITION_IN: moving plunge — descend the last `approach` mm while
-                #    moving forward `plunge` mm, E feeding. F-compensated so the realized
-                #    XY speed == traverse (>= grind floor).
-                move("G1", x=x, y=y_pl, z=ly.z, a=a,
+                # 4. TRANSITION_IN: moving plunge over the first `plunge` mm of the path,
+                #    descending to layer Z. F-compensated for the Z descent (§6.2/§4.4).
+                plunge = min(lead_in, 0.5 * p.length_mm)
+                pp, deposit_pts = _split_polyline(pts, plunge)
+                a_pl = _seg_a(start, pp, cfg.c_axis) if plunge > 1e-9 else a_first
+                de_plunge = p.e_per_path_mm * plunge
+                f_plunge = _compensated_feed(v, max(plunge, 1e-9),
+                                             math.hypot(max(plunge, 1e-9), approach))
+                move("G1", x=pp[0], y=pp[1], z=ly.z, a=a_pl,
                      e=None if dry else de_plunge, f=f_plunge, cur_z=ly.z)
                 cur_z = ly.z
                 if not dry:
                     e_cum += de_plunge
                     e_seq.append(e_cum)
-                    # the plunge is an in-contact, wire-feeding move — prove it too
                     assert_contact_invariant(
                         in_contact=True, xy_speed_mm_s=v_s,
                         v_grind_floor_mm_s=floor_s, e_feeding=de_plunge > 0)
 
-                # 5. DEPOSITING: steady forward move (pure +Y, ΔZ=ΔA=0 -> F == XY speed)
-                move("G1", x=x, y=y1, a=a,
-                     e=None if dry else de_steady, f=f_dep, cur_z=cur_z)
-                if not dry:
-                    e_cum += de_steady
-                    e_seq.append(e_cum)
-                    assert_contact_invariant(
-                        in_contact=True, xy_speed_mm_s=v_s,
-                        v_grind_floor_mm_s=floor_s, e_feeding=de_steady > 0)
+                # 5. DEPOSITING: one G1 per polyline segment, A per segment. Each segment
+                #    is planar (ΔZ=0) so F == the XY traverse (the rotary is slaved; the
+                #    §6.2 combined-move feedrate is a calibration item, SPEC §13).
+                prev = deposit_pts[0]
+                for nxt in deposit_pts[1:]:
+                    seg_len = math.hypot(nxt[0] - prev[0], nxt[1] - prev[1])
+                    if seg_len <= 1e-9:
+                        continue
+                    de = p.e_per_path_mm * seg_len
+                    move("G1", x=nxt[0], y=nxt[1], a=_seg_a(prev, nxt, cfg.c_axis),
+                         e=None if dry else de, f=f_dep, cur_z=cur_z)
+                    if not dry:
+                        e_cum += de
+                        e_seq.append(e_cum)
+                        assert_contact_invariant(
+                            in_contact=True, xy_speed_mm_s=v_s,
+                            v_grind_floor_mm_s=floor_s, e_feeding=de > 0)
+                    prev = nxt
 
-                # 6. TRANSITION_OUT: continue fwd through lead-out while lifting; E stops
-                move("G1", x=x, y=y1 + lead_out, z=lift_z, f=f_z, cur_z=lift_z)
+                # 6. TRANSITION_OUT: continue past the last point along the last heading
+                #    through the lead-out while lifting; E stops; wire cut at the runout.
+                lx, ly_u = _unit(deposit_pts[-2], deposit_pts[-1])
+                end = deposit_pts[-1]
+                move("G1", x=end[0] + lead_out * lx, y=end[1] + lead_out * ly_u,
+                     z=lift_z, f=f_z, cur_z=lift_z)
                 cur_z = lift_z  # wire cut at the lead-out (mechanical runout)
 
         # park + postamble
@@ -240,6 +273,21 @@ class GCodeEmitter:
                 "M106 P0 S0", "M84"]
 
     # ---- validators ---------------------------------------------------------
+
+    @staticmethod
+    def _validate_pass_geometry(p, v_mm_min: float, cfg: Config) -> None:
+        """SPEC §6.3: every deposition segment heading is in the wedge (and within the
+        hard mechanical +/- range), and the whole pass holds R >= R_min(v) (§4.3)."""
+        wedge = cfg.c_axis.wedge_half_angle_deg
+        for a in p.segment_a_degs(cfg.c_axis):
+            validate_heading(a, cfg.c_axis)
+            if abs(a) > wedge + 1e-9:
+                raise ValueError(f"A={a:.2f} exceeds the mechanical +/-{wedge} deg range")
+        r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
+        if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
+            raise ValueError(
+                f"pass turn radius {p.min_radius_mm:.3f} mm < R_min {r_floor:.3f} mm at "
+                f"v={v_mm_min:g} mm/min (SPEC §4.3/§6.3) — split tighter on curvature")
 
     @staticmethod
     def _validate_constant_revs_per_mm(plan, rel_tol: float = 1e-3) -> None:

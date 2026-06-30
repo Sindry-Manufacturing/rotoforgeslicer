@@ -66,6 +66,16 @@ class ProcessCfg:
 
 
 @dataclass
+class FillCfg:
+    """Fill strategy (SPEC §4.2)."""
+    mode: str = "raster"                 # raster | streamline
+    crosshatch: bool = False             # alternate the heading between layers
+    crosshatch_angle_deg: float = 30.0   # +/- offset from +Y on alternating layers (<= wedge)
+    streamline_step_mm: float = 0.5      # streamline integration step
+    streamline_curl: float = 0.6         # 0 = straight +Y; higher = more boundary-following
+
+
+@dataclass
 class CollisionCfg:
     """2.5D swept-disc + leading-wire collision check (SPEC §4.6)."""
     enabled: bool = True
@@ -117,6 +127,7 @@ class Config:
     gcode: GcodeCfg = field(default_factory=GcodeCfg)
     emit: EmitCfg = field(default_factory=EmitCfg)
     collision: CollisionCfg = field(default_factory=CollisionCfg)
+    fill: FillCfg = field(default_factory=FillCfg)
 
 
 def _filter(dc_type, data: Mapping[str, Any] | None) -> dict:
@@ -149,4 +160,5 @@ def load_config(path: str | Path) -> Config:
         gcode=GcodeCfg(**_filter(GcodeCfg, raw.get("gcode"))),
         emit=EmitCfg(**_filter(EmitCfg, raw.get("emit"))),
         collision=CollisionCfg(**_filter(CollisionCfg, raw.get("collision"))),
+        fill=FillCfg(**_filter(FillCfg, raw.get("fill"))),
     )
