@@ -15,13 +15,22 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **U2 — tagged toolpath segments + 3D viewer — landed.** New `toolpath/segments.py`
+  turns a plan into tagged, fully-3D `ToolpathSegment`s (deposition / lead-in / lead-out /
+  liftoff / reset / travel), walking the emitter's §6.1 motion sequence so the drawn
+  coordinates match the emitted G-code **move-for-move** (cross-checked in
+  `tests/test_segments.py`, straight + curved). The GUI's shared viewport gains a **3D
+  toolpath tab** (`preview.plot_toolpath_3d`, matplotlib mplot3d) beside the 2D layer view,
+  sharing the layer scrubber, with **five independent color-coded toggles** for the move
+  classes (liftoff = airborne Z retract, reset = airborne Z approach, travel = airborne XY
+  hop). `build_preview` now carries `segments`. 138 tests green.
 - **Constraint-model correction — tangential tool, NO wedge (D13) — landed.** Supersedes
   the entire "deposition wedge" framing (D3/D12). The head rotates as a unit, so every
   heading deposits identically; `A` always equals the travel heading (drift ≈ 0). The
   only C-axis limits are the **slew rate** (`R ≥ v/ω_C`) and the **usable continuous
   angular range** `[a_min_deg, a_max_deg]`. **Removed** `wedge_half_angle_deg` /
   `in_wedge` / `vector_in_wedge` / `validate_heading`. **Added:** `within_axis_range`,
-  `unwrap_headings`, `winding_shift` (`fill/wedge.py`); `split_on_winding` +
+  `unwrap_headings`, `winding_shift` (`fill/heading.py`); `split_on_winding` +
   `Pass.axis_angles` (winding-resolved, continuous, in-range A) in `passplan.py`;
   **bidirectional raster** (`fill.raster_bidirectional`); the emitter now commands a
   continuous winding-resolved A and validates `within_axis_range` + winding continuity;

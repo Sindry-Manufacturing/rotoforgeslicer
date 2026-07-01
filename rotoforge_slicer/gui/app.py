@@ -140,13 +140,43 @@ def _build_main_window():
             left.setMaximumWidth(330)
             split.addWidget(left)
 
-            # ---- right: canvas + slider + log ----
+            # ---- right: shared viewport (2D layer + 3D toolpath tabs) + slider + log ----
+            from ..toolpath.segments import TOGGLE_ORDER
+
             right = QtWidgets.QWidget()
             rlyt = QtWidgets.QVBoxLayout(right)
+            self.tabs = QtWidgets.QTabWidget()
+
+            # 2D per-layer view (regions + deposition vectors + lead-outs/resets)
             self.canvas = make_preview_canvas(self)
             self.ax = self.canvas.figure.axes[0]
-            rlyt.addWidget(NavigationToolbar2QT(self.canvas, right))
-            rlyt.addWidget(self.canvas, stretch=1)
+            page2d = QtWidgets.QWidget()
+            l2 = QtWidgets.QVBoxLayout(page2d)
+            l2.addWidget(NavigationToolbar2QT(self.canvas, page2d))
+            l2.addWidget(self.canvas, stretch=1)
+            self.tabs.addTab(page2d, "Layer (2D)")
+
+            # 3D toolpath view (U2): color-coded, independently toggleable move classes
+            self.canvas3d = make_preview_canvas(self, projection="3d")
+            self.ax3d = self.canvas3d.figure.axes[0]
+            page3d = QtWidgets.QWidget()
+            l3 = QtWidgets.QVBoxLayout(page3d)
+            trow = QtWidgets.QHBoxLayout()
+            trow.addWidget(QtWidgets.QLabel("Show:"))
+            self.toggles = {}
+            for name in TOGGLE_ORDER:
+                cb = QtWidgets.QCheckBox(name)
+                cb.setChecked(True)
+                cb.stateChanged.connect(self._render_3d)
+                self.toggles[name] = cb
+                trow.addWidget(cb)
+            trow.addStretch(1)
+            l3.addLayout(trow)
+            l3.addWidget(NavigationToolbar2QT(self.canvas3d, page3d))
+            l3.addWidget(self.canvas3d, stretch=1)
+            self.tabs.addTab(page3d, "Toolpath (3D)")
+
+            rlyt.addWidget(self.tabs, stretch=1)
 
             srow = QtWidgets.QHBoxLayout()
             self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
@@ -265,6 +295,22 @@ def _build_main_window():
             self.layer_lbl.setText(f"layer {i}/{self.preview.layer_count - 1}  "
                                    f"z={layer.z:.2f}mm  {len(lp.passes)} passes")
             self.canvas.draw_idle()
+            self._render_3d()
+
+        def _render_3d(self, *args):
+            """Redraw the 3D toolpath for the enabled toggles, up to the scrubbed layer.
+            Cheap enough to re-run on every slider move or toggle (one collection/kind)."""
+            if not self.preview:
+                return
+            from .preview import plot_toolpath_3d
+
+            segs = getattr(self.preview, "segments", None) or []
+            self.ax3d.clear()
+            if segs:
+                enabled = {n for n, cb in self.toggles.items() if cb.isChecked()}
+                plot_toolpath_3d(segs, ax=self.ax3d, cfg=self.cfg, enabled=enabled,
+                                 upto_layer=self.slider.value())
+            self.canvas3d.draw_idle()
 
         def _save(self):
             if not (self.preview and self.preview.gcode):

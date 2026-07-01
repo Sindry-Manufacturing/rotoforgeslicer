@@ -229,13 +229,105 @@ def plot_slices(model, max_layers: int = 12, *, cfg=None):
     return fig
 
 
-def make_preview_canvas(parent=None):
-    """An embedded Qt matplotlib canvas for the GUI preview (SPEC §9)."""
+def plot_toolpath_3d(segments, ax=None, *, cfg=None, enabled=None, upto_layer=None,
+                     title=None, legend=True):
+    """Draw tagged :class:`~rotoforge_slicer.toolpath.segments.ToolpathSegment` in 3D,
+    color-coded by kind (SPEC §9; U2).
+
+    ``segments``   list from ``toolpath.segments.build_segments``.
+    ``enabled``    iterable of viewer-toggle names (``segments.TOGGLE_ORDER``); None = all.
+    ``upto_layer`` layer index — show only segments on that layer and below (the layer
+                   scrubber's cumulative build-up view); None shows the whole path.
+
+    One ``Line3DCollection`` per shown kind (so toggling stays cheap). Returns the Axes3D.
+    """
+    from collections import defaultdict
+
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+    from ..toolpath.segments import KIND_COLOR, TOGGLE_KINDS, TOGGLE_ORDER, SegmentKind
+
+    if ax is None:
+        import matplotlib.pyplot as plt
+        import mpl_toolkits.mplot3d  # noqa: F401 (registers the 3d projection)
+
+        ax = plt.figure().add_subplot(111, projection="3d")
+
+    shown = set()
+    for name in TOGGLE_ORDER:
+        if enabled is None or name in set(enabled):
+            shown.update(TOGGLE_KINDS[name])
+
+    # deposition solid + thick; lead-in/out solid; airborne (travel/liftoff/reset) dashed thin
+    style = {
+        SegmentKind.DEPOSITION: (2.2, "-"),
+        SegmentKind.LEAD_IN: (1.6, "-"),
+        SegmentKind.LEAD_OUT: (1.6, "-"),
+        SegmentKind.LIFTOFF: (0.9, "--"),
+        SegmentKind.RESET: (0.9, "--"),
+        SegmentKind.TRAVEL: (0.7, ":"),
+    }
+
+    by_kind = defaultdict(list)
+    for s in segments:
+        if s.kind not in shown:
+            continue
+        if upto_layer is not None and s.layer_index is not None and s.layer_index > upto_layer:
+            continue
+        by_kind[s.kind].append((s.start, s.end))
+
+    xs, ys, zs = [], [], []
+    for kind in SegmentKind:                    # stable draw order -> deterministic legend
+        lines = by_kind.get(kind)
+        if not lines:
+            continue
+        lw, ls = style[kind]
+        ax.add_collection3d(Line3DCollection(
+            lines, colors=KIND_COLOR[kind], linewidths=lw, linestyles=ls, label=kind.value))
+        for a, b in lines:
+            xs += (a[0], b[0])
+            ys += (a[1], b[1])
+            zs += (a[2], b[2])
+
+    if xs:
+        _set_equal_3d(ax, xs, ys, zs)           # mplot3d won't autoscale a Line3DCollection
+    ax.set_xlabel("X [mm]")
+    ax.set_ylabel("Y [mm]")
+    ax.set_zlabel("Z [mm]")
+    if legend and by_kind:
+        ax.legend(loc="upper left", fontsize=8)
+    if title:
+        ax.set_title(title, fontsize=10)
+    return ax
+
+
+def _set_equal_3d(ax, xs, ys, zs, pad: float = 0.05) -> None:
+    """Undistorted (equal-scale) 3D limits with a small pad: center each axis on the
+    data and share one half-range, so the toolpath keeps true proportions."""
+    xmin, xmax, ymin, ymax, zmin, zmax = (
+        min(xs), max(xs), min(ys), max(ys), min(zs), max(zs))
+    cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
+    half = max(xmax - xmin, ymax - ymin, zmax - zmin, 1.0) * (0.5 + pad)
+    ax.set_xlim(cx - half, cx + half)
+    ax.set_ylim(cy - half, cy + half)
+    ax.set_zlim(cz - half, cz + half)
+
+
+def make_preview_canvas(parent=None, *, projection=None):
+    """An embedded Qt matplotlib canvas for the GUI preview (SPEC §9).
+
+    ``projection="3d"`` returns a canvas with an ``Axes3D`` (the U2 toolpath viewer);
+    the default is the 2D per-layer preview axes."""
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
     from matplotlib.figure import Figure
 
     canvas = FigureCanvasQTAgg(Figure(figsize=(6, 6)))
-    canvas.figure.add_subplot(111)
+    if projection == "3d":
+        import mpl_toolkits.mplot3d  # noqa: F401 (registers the 3d projection)
+
+        canvas.figure.add_subplot(111, projection="3d")
+    else:
+        canvas.figure.add_subplot(111)
     return canvas

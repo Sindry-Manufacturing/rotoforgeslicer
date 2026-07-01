@@ -17,6 +17,7 @@ class SlicePreview:
     cfg: Config
     model: object                # geometry.SlicedModel (placed)
     plan: object                 # passplan.ToolpathPlan
+    segments: list = field(default_factory=list)   # toolpath.segments.ToolpathSegment (U2)
     collisions: list = field(default_factory=list)
     collisions_by_layer: Dict[int, list] = field(default_factory=dict)
     gcode: Optional[str] = None          # None if §6.3 validation failed
@@ -107,6 +108,13 @@ def build_preview(mesh_path: str, cfg: Config, screener_csv: Optional[str] = Non
         if i is not None:
             by_layer.setdefault(i, []).append(c)
 
+    # Tagged 3D toolpath segments for the viewer (U2). Pure geometry mirroring the
+    # emitter's motion, so it is built even when §6.3 validation below fails — you can
+    # still inspect the path that tripped the check.
+    from ..toolpath.segments import build_segments
+
+    segments = build_segments(plan, cfg)
+
     tick(0.92, "emitting G-code…")
     from ..emit.rrf import GCodeEmitter
 
@@ -117,6 +125,7 @@ def build_preview(mesh_path: str, cfg: Config, screener_csv: Optional[str] = Non
         err = str(e)
 
     tick(1.0, "done")
-    return SlicePreview(cfg=cfg, model=model, plan=plan, collisions=collisions,
-                        collisions_by_layer=by_layer, gcode=gcode, validation_error=err,
+    return SlicePreview(cfg=cfg, model=model, plan=plan, segments=segments,
+                        collisions=collisions, collisions_by_layer=by_layer,
+                        gcode=gcode, validation_error=err,
                         operating_point=op, source=mesh_path)
