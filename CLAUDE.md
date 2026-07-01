@@ -35,12 +35,16 @@ build. The emitter must **prove** none are violated (SPEC §6.3):
    subtractive. Use `toolpath.statemachine.assert_contact_invariant`.
 2. **All dwells airborne.** Startup settle (~10 s) and between-pass spindle
    stabilization happen with the wheel lifted — never in contact.
-3. **±90° deposition wedge, +Y only.** Every deposition heading is within ±90° of
-   the +Y home heading (tangent dy ≥ 0; forward only; −Y is impossible). No closed
-   perimeters. The A axis travels ±180° **mechanically** (`a_min_deg`/`a_max_deg`,
-   for airborne reorientation), but **deposition stays inside the wedge — never
-   ±180°** (that points −Y). The two limits are validated separately. Use
-   `fill.wedge`.
+3. **Tangential tool, no privileged direction (D13).** Wheel heading = travel
+   direction at all times (commanded drift ≈ 0); the C axis tracks the path tangent,
+   so `A` is always the travel heading. +Y home is only the axis **zero** reference —
+   it has no deposition meaning. There is **no wedge**: every heading deposits, raster
+   may be **bidirectional**, and closed contours are allowed. Curves/loops are limited
+   solely by the slew rate (`R ≥ v/ω_C`, invariant 6) and the C axis's usable
+   continuous angular range `[a_min_deg, a_max_deg]` (no full 360°) — track accumulated
+   axis angle and insert **airborne unwinds** when a sweep would exceed it. Use
+   `fill.wedge` (heading↔A + `within_axis_range` + winding) and `toolpath.passplan`
+   (`split_on_winding`). See `docs/DECISIONS.md` D13.
 4. **Monotonic E.** Wire never retracts. Pass-to-pass separation is a mechanical
    cut at a lead-out, not negative E.
 5. **Constant revs/mm per pass.** revs/mm = RPM / traverse = the screener's

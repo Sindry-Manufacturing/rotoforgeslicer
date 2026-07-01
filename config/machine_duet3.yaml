@@ -17,10 +17,12 @@ c_axis:
   home_heading_deg: 90           # +Y is 90 deg CCW from +X
   home_offset_deg: 0
   invert_sign: 1                 # +1 or -1; calibrate to firmware M569 direction
-  wedge_half_angle_deg: 90       # DEPOSITION wedge: reachable deposition headings = +Y +/- 90 deg. NOT the mechanical limit.
-  a_min_deg: -180                # mechanical/firmware travel limit (airborne positioning); continuous within [-180, 180]
-  a_max_deg: 180                 # the wheel cannot wrap past these stops (no full 360 deg in one move)
-  max_speed_deg_s: 360.0         # measured on hardware: 360 deg/s -> R_min = v/omega
+  # No deposition wedge (D13): the head rotates as a unit, so every heading deposits
+  # identically. The only C-axis limits are the slew rate and the angular range below.
+  a_min_deg: -180                # usable CONTINUOUS angular range (head obstructions); no full 360 deg
+  a_max_deg: 180                 # >>> set to the REAL measured range; decides closed-loop-in-one-pass
+  max_speed_deg_s: 360.0         # omega_C, measured on hardware: 360 deg/s -> R_min = v/omega
+  max_drift_deg: 0.0             # allowed transient heading lag on curves (keep 0 unless tuned)
 
 spindle:
   rpm_min: 5000

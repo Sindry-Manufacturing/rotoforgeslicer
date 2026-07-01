@@ -22,20 +22,21 @@ def _curved_plan(cfg, points, v=120.0, rpm=5000):
     return ToolpathPlan([LayerPlan(0, 0.06, [p])], rpm, v, v)
 
 
-def test_curved_pass_emits_per_segment_headings_in_wedge():
-    # a gentle curve within the wedge: headings sweep but stay |A| <= 45.
+def test_curved_pass_emits_per_segment_a_in_axis_range():
+    # a gentle curve: headings (and so A) sweep per segment, all within the axis range.
     cfg = _cfg()
     pts = [(190, 100), (190, 106), (191.5, 112), (194, 117)]
     g = GCodeEmitter(cfg).emit(_curved_plan(cfg, pts))
     a_vals = [float(m) for l in g.splitlines() if l.startswith("G1")
               for m in re.findall(r" A(-?\d+\.?\d*)", l)]
     assert len(set(a_vals)) > 1                      # A really does change per segment
-    assert max(abs(a) for a in a_vals) <= cfg.c_axis.wedge_half_angle_deg
+    assert all(cfg.c_axis.a_min_deg - 1e-6 <= a <= cfg.c_axis.a_max_deg + 1e-6
+               for a in a_vals)
 
 
 def test_emit_rejects_turn_tighter_than_curvature_limit():
-    # both segment headings stay in the wedge, but the turn radius is below R_min at a
-    # fast traverse -> the §6.3 curvature validator must reject it (SPEC §4.3).
+    # the turn radius is below R_min at a fast traverse -> the §6.3 curvature validator
+    # must reject it (SPEC §4.3), independent of the (now wedge-free) heading limits.
     cfg = _cfg()
     pts = [(190, 100), (190, 103), (191.93, 105.30)]   # ~40 deg turn, ~4 mm radius
     p0 = Pass.curved(pts, z=0.06, rpm=20000, traverse_mm_min=120.0,

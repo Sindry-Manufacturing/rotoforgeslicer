@@ -34,8 +34,8 @@ def test_default_config_finds_bundled_yaml(monkeypatch, tmp_path):
 
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "machine_duet3.yaml").write_text(
-        "c_axis:\n  wedge_half_angle_deg: 73\n")
+        "c_axis:\n  a_max_deg: 173\n")
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     monkeypatch.chdir(tmp_path.parent)                   # so cwd/config doesn't shadow it
     cfg = _default_config()
-    assert cfg.c_axis.wedge_half_angle_deg == 73         # loaded from the bundle
+    assert cfg.c_axis.a_max_deg == 173                   # loaded from the bundle

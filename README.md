@@ -10,13 +10,16 @@ Full design spec: **`docs/rotoforge_slicer_SPEC.md`**.
 ## Status
 
 **M1–M7 complete** — the full slicer: geometry, straight + curved fill, the process
-window, contact/collision, the GUI, and one-click executables. **Implemented and tested:** config loading, heading<->A-axis mapping, the
-configurable deposition-wedge check (±90° in the machine config) plus the separate
-±180° mechanical A-range check, the curvature/slew limit, extrusion ratios, the
-contact-"grinding" invariant; **M1**: mesh load + repair + planar
+window, contact/collision, the GUI, and one-click executables. A later **constraint-model
+correction (D13)** removed the "deposition wedge" entirely: the head rotates as a unit, so
+every heading deposits (no privileged direction), raster is bidirectional, and the only
+C-axis limits are the slew rate and the usable angular range `[a_min_deg, a_max_deg]` with
+winding management. **Implemented and tested:** config loading, heading<->A-axis mapping,
+the axis-range + winding check (`within_axis_range` / `split_on_winding`), the
+curvature/slew limit, extrusion ratios, the contact-"grinding" invariant; **M1**: mesh load + repair + planar
 `section_multiplane` slicing -> shapely regions (`geometry/`) + matplotlib preview
-(`gui/preview.py`); **M2**: unidirectional +Y raster fill (`fill/raster.py`),
-constant-(v,RPM) straight-pass planning (`toolpath/passplan.py`), bed placement, and a
+(`gui/preview.py`); **M2**: bidirectional raster fill (`fill/raster.py`),
+constant-(v,RPM) pass planning (`toolpath/passplan.py`), bed placement, and a
 SPEC-compliant RRF emitter (`emit/rrf.py`) that proves the §6.3 invariants; **M3**: the
 FRAM screener handshake (`process/screener.py`) — CSV -> widest-contiguous revs/mm ray
 -> operating point -> per-pass **airborne RPM placement** + screener E coupling, with a
@@ -30,9 +33,9 @@ emitted as per-segment curved moves with the §6.3 `R ≥ R_min` proof. Set
 `fill.mode: streamline` and/or `fill.crosshatch: true` in the config to enable; **M6**:
 a PySide6 GUI (`gui/`) — open a mesh, tweak process fields, Slice off the UI thread,
 scrub layers with a slider, inspect the toolpath (deposition vectors, lead-outs,
-wire-cuts, resets, the wedge, collisions) with mouse zoom/pan, and Save the
-validated G-code, with a **C-axis wedge ± field (0–180°)** to widen or narrow the
-depositable heading range before slicing. Launch with `rotoforge-slicer-gui [mesh.stl]`;
+wire-cuts, resets, the +Y home reference, collisions) with mouse zoom/pan, and Save the
+validated G-code, with **C-axis A-min/A-max fields** to set the usable angular range
+before slicing. Launch with `rotoforge-slicer-gui [mesh.stl]`;
 **M7**: one-file PyInstaller executables (`packaging/rotoforge_slicer.spec` +
 `launch_gui.py` frozen entry point, bundling the lazy package submodules and the
 `config/` YAML read back via `sys._MEIPASS`) built per-OS by `build_windows.bat` /
@@ -40,11 +43,12 @@ depositable heading range before slicing. Launch with `rotoforge-slicer-gui [mes
 launches from a verified spec.
 
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
-> `afrb_playground_gui(2).py` generator are not in the repo; the only existing
-> reference output is from a superseded prototype whose closed perimeters and
-> 0-220 deg A range conflict with the SPEC's wedge/no-perimeter invariants. Per
-> decision, M2 is built to the authoritative SPEC and **bit-exact `afrb_yline_*`
-> parity is deferred** until those reference files are provided.
+> `afrb_playground_gui(2).py` generator are not in the repo. The only existing
+> reference output is from an older prototype whose closed perimeters are now
+> *consistent* with the corrected constraint model (D13: no wedge, closed contours
+> allowed), though its 0–220° A range still differs from the calibrated
+> `[a_min_deg, a_max_deg]`. **Bit-exact `afrb_yline_*` parity is deferred** until
+> those reference files are provided.
 
 ## Quickstart
 
@@ -63,7 +67,7 @@ rotoforge_slicer/      package
   pipeline.py          orchestrator                        [stub]
   cli.py               headless CLI                        [done/stub]
   geometry/            load + repair + planar slice + place [M1 done]
-  fill/                wedge, raster, streamline, curvature [M5 done]
+  fill/                heading/axis-range, raster, streamline, curvature [done]
   toolpath/            state machine, pass plan, collision  [M4 done]
   process/             screener CSV, extrusion              [M3 done]
   emit/                RRF G-code emitter, templates        [M2 emitter done]

@@ -42,9 +42,10 @@ def test_emit_structure_and_monotonic_e(tmp_path):
           for m in re.findall(r" E(-?\d+\.?\d*)", l)]
     assert es and all(d >= 0 for d in es)
 
-    # every deposition heading is in the +/- wedge.
+    # every commanded A is within the usable axis range (D13: no wedge).
     avals = [float(m) for l in lines for m in re.findall(r" A(-?\d+\.?\d*)", l)]
-    assert avals and max(abs(a) for a in avals) <= cfg.c_axis.wedge_half_angle_deg
+    assert avals and all(cfg.c_axis.a_min_deg - 1e-6 <= a <= cfg.c_axis.a_max_deg + 1e-6
+                         for a in avals)
 
 
 def test_emit_dry_run_disables_spindle_and_extrusion(tmp_path):
@@ -98,7 +99,7 @@ def test_no_dwell_airborne_validator_is_falsifiable(tmp_path):
         [(dep_z + cfg.process.inter_pass_lift_mm, dep_z)], plan)
 
 
-def test_emit_holed_part_keeps_e_monotonic_and_in_wedge(tmp_path):
+def test_emit_holed_part_keeps_e_monotonic_and_in_axis_range(tmp_path):
     cfg = load_config(CFG)
     ann = trimesh.creation.annulus(r_min=6.0, r_max=18.0, height=3.0, sections=64)
     stl = tmp_path / "ann.stl"
@@ -109,7 +110,8 @@ def test_emit_holed_part_keeps_e_monotonic_and_in_wedge(tmp_path):
           for m in re.findall(r" E(-?\d+\.?\d*)", l)]
     assert es and all(d >= 0 for d in es)                      # holed layers, still monotonic
     avals = [float(m) for l in lines for m in re.findall(r" A(-?\d+\.?\d*)", l)]
-    assert avals and max(abs(a) for a in avals) <= cfg.c_axis.wedge_half_angle_deg
+    assert avals and all(cfg.c_axis.a_min_deg - 1e-6 <= a <= cfg.c_axis.a_max_deg + 1e-6
+                         for a in avals)
 
 
 def test_slice_mesh_end_to_end_writes_file(tmp_path):

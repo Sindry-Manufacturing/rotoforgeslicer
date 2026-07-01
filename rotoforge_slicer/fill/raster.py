@@ -1,9 +1,11 @@
-"""Unidirectional +Y raster fill within the wedge. SPEC §4.2.
+"""Raster fill. SPEC §4.2 (D13).
 
-No bidirectional/boustrophedon (-Y deposition is impossible): every pass goes
-forward along the heading, then lift and travel (wheel up) back to the next line's
-start. The default heading is +Y (90 deg CCW from +X). A non-default heading is
-supported via rotation so the cross-*layer* crosshatch (M5) can reuse this.
+The head rotates as a unit, so there is no privileged direction (D13). Raster is
+**bidirectional** by default: adjacent lines alternate heading 180° (a boustrophedon),
+so the wheel just turns 180° airborne at the end of each line instead of flying all the
+way back — every line deposits, none is a wasted return. Set ``bidirectional=False``
+for the legacy one-way sweep. The default heading is +Y (90 deg CCW from +X); a
+non-default heading is supported via rotation so the cross-*layer* crosshatch reuses it.
 
 shapely is imported lazily so the light core stays import-cheap (CLAUDE.md).
 """
@@ -39,14 +41,14 @@ def _iter_lines(geom):
 
 
 def raster_lines(region, pitch: float, heading_deg: float = 90.0,
-                 min_len: float = 0.0) -> List[Segment]:
-    """Hatch ``region`` with parallel lines spaced ``pitch`` apart, each running
-    forward along ``heading_deg``.
+                 min_len: float = 0.0, bidirectional: bool = False) -> List[Segment]:
+    """Hatch ``region`` with parallel lines spaced ``pitch`` apart.
 
-    Returns a list of ``((x0, y0), (x1, y1))`` segments, each oriented so that
-    going start->end advances along +heading (so +Y for the default). Segments
-    shorter than ``min_len`` are dropped. Holes are respected (the clip is against
-    the region polygon, interiors included).
+    Returns a list of ``((x0, y0), (x1, y1))`` segments in left-to-right order. Each is
+    oriented forward along +heading (so +Y for the default); with ``bidirectional`` set,
+    every other line is flipped so adjacent lines run 180° apart (boustrophedon — D13).
+    Segments shorter than ``min_len`` are dropped. Holes are respected (the clip is
+    against the region polygon, interiors included).
     """
     from shapely import affinity
     from shapely.geometry import LineString
@@ -81,4 +83,11 @@ def raster_lines(region, pitch: float, heading_deg: float = 90.0,
             if length >= min_len:
                 segments.append(((sx0, sy0), (sx1, sy1)))
         x += pitch
+
+    if bidirectional:
+        # flip every other line so adjacent lines run 180 deg apart (the head turns
+        # airborne between them); the long fly-back of the one-way sweep is gone (D13).
+        for k in range(1, len(segments), 2):
+            (s, e) = segments[k]
+            segments[k] = (e, s)
     return segments

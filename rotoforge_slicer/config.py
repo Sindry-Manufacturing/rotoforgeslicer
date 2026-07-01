@@ -32,13 +32,13 @@ class MachineCfg:
 
 @dataclass
 class CAxisCfg:
-    home_heading_deg: float = 90.0
+    home_heading_deg: float = 90.0       # +Y; ONLY the axis-zero reference, no deposition meaning (D13)
     home_offset_deg: float = 0.0
     invert_sign: int = 1
-    wedge_half_angle_deg: float = 45.0   # DEPOSITION wedge (reachable +Y headings); NOT the mechanical limit
-    a_min_deg: float = -180.0            # mechanical/firmware travel limit (airborne positioning)
-    a_max_deg: float = 180.0             # continuous within [a_min_deg, a_max_deg]; no full 360 deg
-    max_speed_deg_s: float = 0.0
+    a_min_deg: float = -180.0            # usable CONTINUOUS angular range (head obstructions); no full 360
+    a_max_deg: float = 180.0            # set to the real measured range; decides closed-loop-in-one-pass
+    max_speed_deg_s: float = 0.0         # omega_C; sets the slew/curvature limit R = v / omega
+    max_drift_deg: float = 0.0           # allowed transient heading lag on curves (keep 0 unless tuned)
 
 
 @dataclass
@@ -71,8 +71,9 @@ class ProcessCfg:
 class FillCfg:
     """Fill strategy (SPEC §4.2)."""
     mode: str = "raster"                 # raster | streamline
+    raster_bidirectional: bool = True    # alternate heading 180 deg between lines (D13; no fly-back)
     crosshatch: bool = False             # alternate the heading between layers
-    crosshatch_angle_deg: float = 30.0   # +/- offset from +Y on alternating layers (<= wedge)
+    crosshatch_angle_deg: float = 30.0   # +/- heading offset on alternating layers (any angle; no wedge)
     streamline_step_mm: float = 0.5      # streamline integration step
     streamline_curl: float = 0.6         # 0 = straight +Y; higher = more boundary-following
 

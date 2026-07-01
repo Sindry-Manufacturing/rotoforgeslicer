@@ -1,6 +1,6 @@
 """End-to-end orchestrator. SPEC §3.1, §11.
 
-mesh -> slice -> place -> wedge raster fill -> pass plan -> emit RRF G-code.
+mesh -> slice -> place -> raster/streamline fill -> pass plan -> emit RRF G-code.
 M1 wired the geometry stage; M2 adds straight-fill planning + the emitter. Pass
 planning collision/curved fill (M4/M5) refine the plan further later.
 """

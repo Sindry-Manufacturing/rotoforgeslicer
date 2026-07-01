@@ -1,4 +1,4 @@
-"""M2 pass planning: constant-(v, RPM) straight +Y passes. SPEC §4.5."""
+"""Pass planning: constant-(v, RPM) passes; bidirectional raster + winding (D13). SPEC §4.5."""
 import math
 
 import pytest
@@ -27,8 +27,9 @@ def test_default_operating_point_single_speed():
     assert op.v_grind_floor_mm_min == op.traverse_mm_min  # one speed -> floor == v
 
 
-def test_plan_passes_forward_y_in_wedge_and_extruding():
+def test_unidirectional_raster_passes_forward_y_and_extruding():
     cfg = Config()
+    cfg.fill.raster_bidirectional = False               # legacy one-way +Y sweep
     plan = plan_toolpath(_model(), cfg)
     assert plan.npasses > 0
     for ly in plan.layers:
@@ -38,6 +39,19 @@ def test_plan_passes_forward_y_in_wedge_and_extruding():
             assert p.end[1] > p.start[1]
             assert p.length_mm >= cfg.process.min_deposit_len_mm
             assert p.e_total_mm > 0                         # wire feeding
+
+
+def test_bidirectional_raster_alternates_heading_180():
+    # D13: the default raster is bidirectional — adjacent lines run 180 deg apart, so the
+    # head just turns airborne instead of flying back.
+    cfg = Config()                                       # raster_bidirectional defaults True
+    passes = [p for ly in plan_toolpath(_model(), cfg).layers for p in ly.passes]
+    headings = [p.heading_deg for p in passes]
+    assert any(abs(h - 90) < 1e-6 for h in headings)     # some +Y lines
+    assert any(abs(abs(h) - 90) < 1e-6 and h < 0 for h in headings)   # some -Y lines
+    for a, b in zip(passes, passes[1:]):                 # consecutive lines are 180 apart
+        d = abs((b.heading_deg - a.heading_deg + 180) % 360 - 180)
+        assert abs(d - 180) < 1e-6
 
 
 def test_plan_revs_per_mm_constant():
@@ -50,10 +64,14 @@ def test_plan_revs_per_mm_constant():
                for ly in plan.layers for p in ly.passes)
 
 
-def test_plan_rejects_out_of_wedge_heading():
+def test_plan_accepts_any_heading_no_wedge():
+    # D13: no wedge -> any base heading plans fine (here +X, which pre-D13 was rejected).
     cfg = Config()
-    with pytest.raises(ValueError):
-        plan_toolpath(_model(), cfg, heading_deg=0.0)  # +X -> A=-90, outside wedge
+    plan = plan_toolpath(_model(), cfg, heading_deg=0.0)   # +X
+    assert plan.npasses > 0
+    for ly in plan.layers:
+        for p in ly.passes:                                # +X lines (or 180 reversed)
+            assert math.isclose(abs(p.heading_deg), 0.0) or math.isclose(abs(p.heading_deg), 180.0)
 
 
 @pytest.mark.parametrize("mode", ["x", "volume"])
@@ -145,9 +163,9 @@ def test_streamline_mode_builds_curved_passes():
     assert any(p.is_curved for ly in plan.layers for p in ly.passes)
 
 
-def test_streamline_passes_emit_within_limit_and_wedge():
+def test_streamline_passes_emit_within_limit_and_axis_range():
     """End-to-end: a curved streamline plan emits with the curvature limit ACTIVE and
-    every per-segment A inside the wedge (SPEC §4.2/§4.3/§6.3)."""
+    every commanded A inside the usable axis range (SPEC §4.2/§4.3/§6.3; D13)."""
     pytest.importorskip("scipy")
     import re
 
@@ -163,12 +181,13 @@ def test_streamline_passes_emit_within_limit_and_wedge():
     model = SlicedModel([Layer(0, 0.06, [region])], layer_height=0.12, z_min=0.0, z_max=0.12)
     plan = plan_toolpath(model, cfg)
     assert any(p.is_curved for ly in plan.layers for p in ly.passes)
-    g = GCodeEmitter(cfg).emit(plan)                    # runs R>=R_min + per-segment wedge
+    g = GCodeEmitter(cfg).emit(plan)                    # runs R>=R_min + axis-range + winding
     a = [float(m) for l in g.splitlines() for m in re.findall(r" A(-?\d+\.?\d*)", l)]
-    assert a and max(abs(v) for v in a) <= cfg.c_axis.wedge_half_angle_deg
+    assert a and all(cfg.c_axis.a_min_deg - 1e-6 <= v <= cfg.c_axis.a_max_deg + 1e-6
+                     for v in a)
 
 
-def test_crosshatch_emits_crossing_layers_in_wedge():
+def test_crosshatch_emits_crossing_layers_in_axis_range():
     import re
 
     from shapely.geometry import Polygon
@@ -178,13 +197,14 @@ def test_crosshatch_emits_crossing_layers_in_wedge():
     cfg = Config()
     cfg.fill.crosshatch = True
     cfg.fill.crosshatch_angle_deg = 30.0
+    cfg.fill.raster_bidirectional = False               # isolate the cross-LAYER crossing
     region = Polygon([(180, 105), (200, 105), (200, 130), (180, 130)])
     layers = [Layer(i, 0.06 + 0.12 * i, [region]) for i in range(2)]
     model = SlicedModel(layers, layer_height=0.12, z_min=0.0, z_max=0.24)
     g = GCodeEmitter(cfg).emit(plan_toolpath(model, cfg))
     a = [float(m) for l in g.splitlines() for m in re.findall(r" A(-?\d+\.?\d*)", l)]
-    assert any(v > 5 for v in a) and any(v < -5 for v in a)   # adjacent layers cross
-    assert max(abs(v) for v in a) <= cfg.c_axis.wedge_half_angle_deg
+    assert any(v > 5 for v in a) and any(v < -5 for v in a)   # adjacent layers cross (+30/-30)
+    assert all(cfg.c_axis.a_min_deg - 1e-6 <= v <= cfg.c_axis.a_max_deg + 1e-6 for v in a)
 
 
 def test_plan_holed_layer_splits_line_into_two_passes():
@@ -202,3 +222,43 @@ def test_plan_holed_layer_splits_line_into_two_passes():
     assert max(per_x.values()) == 2   # a holed line -> two passes
     assert min(per_x.values()) == 1   # a clear line -> one pass
     assert all(p.e_total_mm > 0 for ly in plan.layers for p in ly.passes)
+
+
+# ---- D13 winding management -------------------------------------------------
+
+def _circle(n=24, r=10.0):
+    """A convex closed loop: its heading sweeps ~360 deg around the loop."""
+    return [(r * math.cos(i * math.tau / n), r * math.sin(i * math.tau / n))
+            for i in range(n + 1)]
+
+
+def test_closed_loop_one_pass_when_range_can_wind_the_whole_turn():
+    # D13 closed contour: a ~360 deg heading sweep stays ONE pass only when the range can
+    # wind the whole turn at one winding; a tighter range that cannot span the linear
+    # ±seam breaks it into arcs with airborne unwinds. Parameterized by a_min/a_max.
+    from rotoforge_slicer.config import CAxisCfg
+    from rotoforge_slicer.toolpath.passplan import split_on_winding
+
+    loop = _circle()
+    wide = CAxisCfg(a_min_deg=-360.0, a_max_deg=360.0)     # winds the full turn -> 1 pass
+    assert len(split_on_winding(loop, wide)) == 1
+    phys = CAxisCfg(a_min_deg=-180.0, a_max_deg=180.0)     # can't span the seam -> arcs
+    assert len(split_on_winding(loop, phys)) >= 2
+
+
+def test_winding_accumulation_never_exceeds_the_range():
+    # every split sub-path, once wound, has all its commanded A inside [a_min, a_max] —
+    # the planner inserts an unwind (a break) exactly where the band would overrun.
+    from rotoforge_slicer.config import CAxisCfg
+    from rotoforge_slicer.toolpath.passplan import Pass, split_on_winding
+
+    rng = CAxisCfg(a_min_deg=-180.0, a_max_deg=180.0)
+    subs = split_on_winding(_circle(), rng)
+    assert len(subs) >= 2
+    for sub in subs:
+        if len(sub) < 2:
+            continue
+        p = Pass.curved(sub, z=0.1, rpm=5000, traverse_mm_min=120.0,
+                        e_per_path_mm=1.0, c_axis=rng)
+        for a in p.axis_angles(rng):
+            assert rng.a_min_deg - 1e-6 <= a <= rng.a_max_deg + 1e-6

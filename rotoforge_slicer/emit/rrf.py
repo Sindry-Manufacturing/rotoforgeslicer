@@ -2,11 +2,12 @@
 
 The emitter turns a planned toolpath into RepRapFirmware G-code following the §6.1
 state-machine sequence (airborne reposition -> moving plunge -> deposit -> lead-out
-+ lift), and PROVES the §6.3 invariants on every move it emits (wedge, contact /
++ lift), and PROVES the §6.3 invariants on every move it emits (axis range, contact /
 no-grinding, monotonic E, no dwell in contact, single RPM+traverse per pass,
-in-build-volume). M2 emits straight +Y passes; because A is constant during a
-straight pass (ΔA=0), F sets the XY speed directly and the §6.2 combined-move
-feedrate compensation is not needed until curved fill (M5).
+in-build-volume). The rotary A is commanded equal to the travel heading at every
+segment (tangential tool, drift ≈ 0; D13), winding-resolved so it stays continuous and
+inside the usable axis range. For a straight pass A is constant (ΔA=0) so F sets the XY
+speed directly; the §6.2 combined-move feedrate compensation matters for curved fill.
 
 The validator functions below are reused by the emitter and are independently
 tested.
@@ -18,16 +19,21 @@ from typing import Iterable, List
 
 from ..config import CAxisCfg, Config
 from ..fill.curvature import r_min
-from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, in_wedge
+from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, within_axis_range
 from ..toolpath.statemachine import assert_contact_invariant  # noqa: F401 (re-exported)
 from . import templates
 
 
-def validate_heading(a_deg: float, c_axis: CAxisCfg) -> None:
-    """SPEC §6.3: every deposition heading within the +/- wedge."""
-    if not in_wedge(a_deg, c_axis):
+def validate_axis_angle(a_deg: float, c_axis: CAxisCfg) -> None:
+    """SPEC §6.3 (D13): every commanded A within the usable continuous axis range.
+
+    There is no deposition wedge — the head rotates as a unit, so any heading deposits.
+    The only hard heading limit is the axis travel range ``[a_min_deg, a_max_deg]``.
+    """
+    if not within_axis_range(a_deg, c_axis):
         raise ValueError(
-            f"heading A={a_deg:.2f} deg outside +/-{c_axis.wedge_half_angle_deg} deg wedge")
+            f"A={a_deg:.2f} deg outside usable axis range "
+            f"[{c_axis.a_min_deg}, {c_axis.a_max_deg}] deg")
 
 
 def validate_monotonic_e(e_values: Iterable[float], tol: float = 1e-9) -> None:
@@ -70,7 +76,14 @@ def _unit(p0, p1):
 
 
 def _seg_a(p0, p1, c_axis) -> float:
+    """Raw rotary A for a segment's heading (no winding; may wrap near ±180)."""
     return heading_to_a_deg(heading_deg_from_vector(p1[0] - p0[0], p1[1] - p0[1]), c_axis)
+
+
+def _continuity_adjust(a_raw: float, a_prev: float) -> float:
+    """Shift ``a_raw`` by whole turns to the value nearest ``a_prev`` — keeps commanded A
+    continuous across a pass (no ±360° jump at the atan2 branch cut; D13)."""
+    return a_raw + 360.0 * round((a_prev - a_raw) / 360.0)
 
 
 def _compensated_feed(target_xy_mm_min: float, l_xy: float, l_3d: float) -> float:
@@ -169,18 +182,20 @@ class GCodeEmitter:
                 v_s = v / 60.0                 # mm/s, for the contact check
                 f_dep = int(round(v))
 
-                # §6.3: every segment heading in the wedge + hard mechanical bound, and
-                # the whole pass within the curvature limit at its single speed (§4.3).
+                # §6.3 (D13): every winding-resolved A within the usable axis range, A
+                # continuous within the pass, and the whole pass within the curvature
+                # limit at its single speed (§4.3).
                 self._validate_pass_geometry(p, v, cfg)
 
                 start = pts[0]
-                a_first = _seg_a(pts[0], pts[1], cfg.c_axis)
+                # Winding-resolved start A (in range); the pass walks continuously from it.
+                a_start = p.axis_angles(cfg.c_axis)[0]
 
                 # 1. airborne reposition (wheel up) to the pass start, first heading set
                 if cur_z != lift_z:
                     move("G0", z=lift_z, f=f_z, cur_z=lift_z)
                     cur_z = lift_z
-                move("G0", x=start[0], y=start[1], a=a_first, f=f_travel, cur_z=cur_z)
+                move("G0", x=start[0], y=start[1], a=a_start, f=f_travel, cur_z=cur_z)
 
                 # 2. RPM placement (SPEC §4.5/§6.1): set the spindle airborne ONLY when
                 #    it changes between passes — never chase RPM mid-move. Long settle on
@@ -203,7 +218,8 @@ class GCodeEmitter:
                 #    descending to layer Z. F-compensated for the Z descent (§6.2/§4.4).
                 plunge = min(lead_in, 0.5 * p.length_mm)
                 pp, deposit_pts = _split_polyline(pts, plunge)
-                a_pl = _seg_a(start, pp, cfg.c_axis) if plunge > 1e-9 else a_first
+                a_pl = (_continuity_adjust(_seg_a(start, pp, cfg.c_axis), a_start)
+                        if plunge > 1e-9 else a_start)
                 de_plunge = p.e_per_path_mm * plunge
                 f_plunge = _compensated_feed(v, max(plunge, 1e-9),
                                              math.hypot(max(plunge, 1e-9), approach))
@@ -217,17 +233,22 @@ class GCodeEmitter:
                         in_contact=True, xy_speed_mm_s=v_s,
                         v_grind_floor_mm_s=floor_s, e_feeding=de_plunge > 0)
 
-                # 5. DEPOSITING: one G1 per polyline segment, A per segment. Each segment
-                #    is planar (ΔZ=0) so F == the XY traverse (the rotary is slaved; the
-                #    §6.2 combined-move feedrate is a calibration item, SPEC §13).
+                # 5. DEPOSITING: one G1 per polyline segment. A tracks the travel heading
+                #    (tangential tool, D13), kept continuous (no ±360 jump) by adjusting
+                #    each segment's raw A toward the previous. Each segment is planar
+                #    (ΔZ=0) so F == the XY traverse (the rotary is slaved; the §6.2
+                #    combined-move feedrate is a calibration item, SPEC §13).
                 prev = deposit_pts[0]
+                a_prev = a_pl
                 for nxt in deposit_pts[1:]:
                     seg_len = math.hypot(nxt[0] - prev[0], nxt[1] - prev[1])
                     if seg_len <= 1e-9:
                         continue
+                    a_cur = _continuity_adjust(_seg_a(prev, nxt, cfg.c_axis), a_prev)
                     de = p.e_per_path_mm * seg_len
-                    move("G1", x=nxt[0], y=nxt[1], a=_seg_a(prev, nxt, cfg.c_axis),
+                    move("G1", x=nxt[0], y=nxt[1], a=a_cur,
                          e=None if dry else de, f=f_dep, cur_z=cur_z)
+                    a_prev = a_cur
                     if not dry:
                         e_cum += de
                         e_seq.append(e_cum)
@@ -255,7 +276,7 @@ class GCodeEmitter:
         self._validate_spindle_in_range(plan, cfg.spindle)
         self._validate_no_dwell_airborne(dwell_records, plan)
         self._validate_in_build_volume(coords, bx, by, bz)
-        self._validate_a_in_mechanical_range(a_seq, cfg.c_axis)
+        self._validate_a_in_axis_range(a_seq, cfg.c_axis)
 
         return "\n".join(lines) + "\n"
 
@@ -279,14 +300,19 @@ class GCodeEmitter:
 
     @staticmethod
     def _validate_pass_geometry(p, v_mm_min: float, cfg: Config) -> None:
-        """SPEC §6.3: every deposition segment heading is inside the DEPOSITION wedge
-        (the narrow +Y-forward limit, ``wedge_half_angle_deg``), and the whole pass
-        holds R >= R_min(v) (§4.3). The wider mechanical travel range
-        (``a_min_deg``/``a_max_deg``) is a separate, file-wide check that also covers
-        airborne A targets — see ``_validate_a_in_mechanical_range``. These are two
-        distinct limits: deposition must never reach ±180° (that points −Y)."""
-        for a in p.segment_a_degs(cfg.c_axis):
-            validate_heading(a, cfg.c_axis)
+        """SPEC §6.3 (D13): the pass's winding-resolved A stays inside the usable axis
+        range ``[a_min_deg, a_max_deg]`` and evolves **continuously** (no ±360° jump —
+        the planner splits over-winding paths with ``split_on_winding``), and the whole
+        pass holds ``R >= R_min(v)`` (§4.3). There is no wedge — every heading is
+        depositable; the only heading limit is the axis travel range."""
+        a_segs = p.axis_angles(cfg.c_axis)
+        for a in a_segs:
+            validate_axis_angle(a, cfg.c_axis)
+        for a0, a1 in zip(a_segs, a_segs[1:]):
+            if abs(a1 - a0) > 180.0 + 1e-6:
+                raise ValueError(
+                    f"A axis jumps {a1 - a0:.1f} deg within a pass (winding discontinuity)"
+                    " — the pass should have been split (SPEC §4.3 / D13)")
         r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
         if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
             raise ValueError(
@@ -332,18 +358,18 @@ class GCodeEmitter:
                         f"[{spindle.rpm_min},{spindle.rpm_max}] (SPEC §1.3)")
 
     @staticmethod
-    def _validate_a_in_mechanical_range(a_values, c_axis, tol: float = 1e-6) -> None:
-        """SPEC §6.3: every commanded A target — deposition AND airborne reorientation
-        — lies within the mechanical/firmware travel limit [a_min_deg, a_max_deg]. This
-        is the wider, distinct sibling of the deposition-wedge check: the wheel cannot
-        wrap past these stops. (Deposition headings are additionally bounded to the much
-        narrower ±wedge by ``validate_heading``.)"""
+    def _validate_a_in_axis_range(a_values, c_axis, tol: float = 1e-6) -> None:
+        """SPEC §6.3 (D13): every commanded A target — deposition AND airborne
+        reorientation — lies within the usable continuous axis range
+        ``[a_min_deg, a_max_deg]``. The head rotates as a unit so any heading deposits;
+        this travel range is the only hard heading limit (no wedge). A pass whose heading
+        sweep would exceed it is split with an airborne unwind (``split_on_winding``)."""
         lo, hi = c_axis.a_min_deg, c_axis.a_max_deg
         for a in a_values:
-            if not (lo - tol <= a <= hi + tol):
+            if not within_axis_range(a, c_axis, tol):
                 raise ValueError(
-                    f"A={a:.2f} deg outside mechanical travel range [{lo},{hi}] — the "
-                    "wheel cannot wrap past its stops (SPEC §2 item 6 / §6.3)")
+                    f"A={a:.2f} deg outside usable axis range [{lo},{hi}] — the wheel "
+                    "cannot wrap past its stops; needs an airborne unwind (D13)")
 
     @staticmethod
     def _validate_in_build_volume(coords, bx, by, bz, tol: float = 1e-6) -> None:

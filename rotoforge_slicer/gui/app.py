@@ -3,7 +3,7 @@
 A thin wrapper over the same pipeline the CLI uses: open a mesh + optional process
 CSV, tweak the key process fields, Slice (off the UI thread), then scrub layers with a
 slider and inspect the toolpath (deposition vectors, lead-outs/wire-cuts, resets, the
-depositable +/-wedge, and any collisions) with mouse zoom/pan. Save the validated G-code.
++Y home reference, and any collisions) with mouse zoom/pan. Save the validated G-code.
 
 PySide6 / matplotlib are imported lazily so importing the package stays light.
 """
@@ -109,7 +109,9 @@ def _build_main_window():
             self.f_bw = self._dspin(p.bead_width_mm, 0.2, 5.0, 0.1, 2)
             self.f_ov = self._dspin(p.raster_overlap, 0.0, 0.8, 0.05, 2)
             self.f_ml = self._dspin(p.min_deposit_len_mm, 1.0, 50.0, 0.5, 1)
-            self.f_wedge = self._dspin(self.cfg.c_axis.wedge_half_angle_deg, 0.0, 180.0, 5.0, 0)
+            # C-axis usable angular range (D13: no wedge; this range + slew are the limits)
+            self.f_amin = self._dspin(self.cfg.c_axis.a_min_deg, -360.0, 0.0, 5.0, 0)
+            self.f_amax = self._dspin(self.cfg.c_axis.a_max_deg, 0.0, 360.0, 5.0, 0)
             self.f_mode = QtWidgets.QComboBox()
             self.f_mode.addItems(["raster", "streamline"])
             self.f_mode.setCurrentText(self.cfg.fill.mode)
@@ -119,7 +121,8 @@ def _build_main_window():
             form.addRow("Bead width (mm)", self.f_bw)
             form.addRow("Raster overlap", self.f_ov)
             form.addRow("Min deposit len (mm)", self.f_ml)
-            form.addRow("C-axis wedge ± (deg)", self.f_wedge)
+            form.addRow("C-axis A min (deg)", self.f_amin)
+            form.addRow("C-axis A max (deg)", self.f_amax)
             form.addRow("Fill mode", self.f_mode)
             form.addRow(self.f_cross)
             box = QtWidgets.QGroupBox("Process")
@@ -197,7 +200,8 @@ def _build_main_window():
             p.bead_width_mm = self.f_bw.value()
             p.raster_overlap = self.f_ov.value()
             p.min_deposit_len_mm = self.f_ml.value()
-            self.cfg.c_axis.wedge_half_angle_deg = self.f_wedge.value()
+            self.cfg.c_axis.a_min_deg = self.f_amin.value()
+            self.cfg.c_axis.a_max_deg = self.f_amax.value()
             self.cfg.fill.mode = self.f_mode.currentText()
             self.cfg.fill.crosshatch = self.f_cross.isChecked()
 

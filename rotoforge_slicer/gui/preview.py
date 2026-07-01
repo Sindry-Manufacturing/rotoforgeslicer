@@ -1,8 +1,8 @@
 """Matplotlib per-layer toolpath / region preview. SPEC §9.
 
 M1 ships the Qt-independent plotting helpers (``plot_layer`` renders a sliced
-layer's region polygons, holes included, with an optional deposition-wedge overlay
-of ±``wedge_half_angle_deg`` about the home heading — ±90° in the machine config).
+layer's region polygons, holes included, with an optional +Y home-heading reference
+arrow — D13 removed the deposition wedge, so there is no wedge fan to draw).
 The embedded Qt canvas (``make_preview_canvas``) is wired in M6 and will reuse these
 helpers.
 
@@ -49,13 +49,13 @@ def plot_layer(
     facecolor="#4C9BE8",
     edgecolor="#16456B",
     alpha: float = 0.5,
-    show_wedge: bool = True,
+    show_home: bool = True,
     title: Optional[str] = None,
 ):
     """Draw a layer's solid regions (with holes) top-down onto a matplotlib Axes.
 
-    Returns the Axes. If ``cfg`` is given and ``show_wedge`` is set, overlays the
-    depositable ±wedge about the home heading (SPEC §4.1) at the layer centroid.
+    Returns the Axes. If ``cfg`` is given and ``show_home`` is set, overlays the +Y
+    home-heading reference arrow (the axis zero; D13 — no wedge) at the layer centroid.
     """
     from matplotlib.patches import PathPatch
 
@@ -71,8 +71,8 @@ def plot_layer(
         ax.add_patch(PathPatch(path, facecolor=facecolor, edgecolor=edgecolor,
                                lw=1.0, alpha=alpha))
 
-    if cfg is not None and show_wedge and regions:
-        _draw_wedge(ax, regions, cfg)
+    if cfg is not None and show_home and regions:
+        _draw_home_ref(ax, regions, cfg)
 
     ax.set_aspect("equal", adjustable="datalim")
     ax.autoscale_view()
@@ -88,8 +88,13 @@ def plot_layer(
     return ax
 
 
-def _draw_wedge(ax, regions, cfg) -> None:
-    """Overlay home heading + depositable wedge boundary rays at the regions' centre."""
+def _draw_home_ref(ax, regions, cfg) -> None:
+    """Overlay the +Y home-heading reference arrow at the regions' centre.
+
+    D13 removed the deposition wedge — every heading is depositable, so there is no
+    wedge fan. The home heading is only the axis-zero reference; we draw it for
+    orientation. (Break/unwind overlays are M11 work.)
+    """
     from shapely.ops import unary_union
 
     c = getattr(cfg, "c_axis", cfg)  # accept a full Config or a CAxisCfg
@@ -100,22 +105,17 @@ def _draw_wedge(ax, regions, cfg) -> None:
     r = 0.45 * span
 
     home = c.home_heading_deg
-    half = c.wedge_half_angle_deg
-    # Home-heading arrow (e.g. +Y).
     ax.annotate(
-        "", xy=(cx + r * math.cos(math.radians(home)), cy + r * math.sin(math.radians(home))),
-        xytext=(cx, cy), arrowprops=dict(arrowstyle="->", color="#107C10", lw=1.5))
-    # Wedge boundary rays (home ± half), travel-direction limits.
-    for edge in (home - half, home + half):
-        ax.plot([cx, cx + r * math.cos(math.radians(edge))],
-                [cy, cy + r * math.sin(math.radians(edge))],
-                color="#107C10", ls="--", lw=1.0, alpha=0.8)
+        "A=0", xy=(cx + r * math.cos(math.radians(home)),
+                   cy + r * math.sin(math.radians(home))),
+        xytext=(cx, cy), color="#107C10",
+        arrowprops=dict(arrowstyle="->", color="#107C10", lw=1.5))
 
 
-def plot_toolpath_layer(layer, layer_plan, ax=None, *, cfg=None, show_wedge=True,
+def plot_toolpath_layer(layer, layer_plan, ax=None, *, cfg=None, show_home=True,
                         show_resets=True, collisions=None, title=None):
     """Draw one layer's planned toolpath: region fill + deposition vectors + lead-outs /
-    wire-cuts + reset (airborne travel) moves + the depositable wedge (SPEC §9).
+    wire-cuts + reset (airborne travel) moves + the +Y home reference (SPEC §9; D13).
 
     ``layer`` is a geometry.Layer (regions), ``layer_plan`` a passplan.LayerPlan (or a
     bare list of passes). Returns the Axes. ``collisions`` may be Collision records whose
@@ -125,7 +125,7 @@ def plot_toolpath_layer(layer, layer_plan, ax=None, *, cfg=None, show_wedge=True
     if ax is None:
         _, ax = plt.subplots()
 
-    plot_layer(layer, ax=ax, cfg=cfg, show_wedge=show_wedge,
+    plot_layer(layer, ax=ax, cfg=cfg, show_home=show_home,
                facecolor="#e9eef5", edgecolor="#9bb0c9", alpha=0.75, title="")
 
     passes = getattr(layer_plan, "passes", layer_plan) or []

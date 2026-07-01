@@ -1,11 +1,12 @@
-"""+Y-biased guidance-field streamlines, clipped to the region. SPEC §4.2.
+"""Guidance-field streamlines, clipped to the region. SPEC §4.2 (D13).
 
 Curved fill for regions where straight rasters waste motion: trace streamlines of a
-guidance field that is biased toward the deposition heading (+Y home) but bends to
-follow the region boundary, so passes parallel the part's contours. Each streamline's
-heading is clamped into the depositable wedge; tight turns are broken later by the
-curvature limit (``fill.curvature.split_on_curvature``) and monotonic-forward / length
-are enforced here. Seeds reuse the raster's clipped line starts so holes and arbitrary
+guidance field biased toward a base heading (+Y by default) but bending to follow the
+region boundary, so passes parallel the part's contours. Under D13 there is **no
+wedge**: the streamline heading is not clamped and curves need not stay "forward" —
+tight turns and over-winding are broken downstream by the slew limit
+(``split_on_curvature``) and the usable axis range (``split_on_winding``). Length is
+enforced here; seeds reuse the raster's clipped line starts so holes and arbitrary
 headings are handled.
 
 numpy / scipy / shapely are imported lazily so the light core stays import-cheap.
@@ -31,8 +32,6 @@ def streamline_fill(region, cfg, heading_deg: float = 90.0) -> List[List[Point]]
 
     step = cfg.fill.streamline_step_mm
     curl = cfg.fill.streamline_curl
-    home = cfg.c_axis.home_heading_deg
-    wedge = cfg.c_axis.wedge_half_angle_deg
     min_len = cfg.process.min_deposit_len_mm
     brad = math.radians(heading_deg)
     bdir = (math.cos(brad), math.sin(brad))
@@ -63,8 +62,9 @@ def streamline_fill(region, cfg, heading_deg: float = 90.0) -> List[List[Point]]
         return dist[i, j] > 0.5 * res
 
     def _direction(x, y):
-        """Unit guidance direction: bias blended with the boundary tangent, clamped
-        into the depositable wedge about home (SPEC §4.1)."""
+        """Unit guidance direction: base bias blended with the boundary tangent. No
+        wedge clamp (D13) — the heading follows the field freely; slew/winding splits
+        downstream keep each emitted pass legal."""
         i, j = _cell(x, y)
         gxv, gyv = ddx[i, j], ddy[i, j]
         gn = math.hypot(gxv, gyv)
@@ -75,10 +75,8 @@ def streamline_fill(region, cfg, heading_deg: float = 90.0) -> List[List[Point]]
             if tx * bdir[0] + ty * bdir[1] < 0:        # orient with the bias
                 tx, ty = -tx, -ty
             dx, dy = bdir[0] + curl * tx, bdir[1] + curl * ty
-        hd = math.degrees(math.atan2(dy, dx))
-        off = max(-wedge, min(wedge, hd - home))       # clamp into the wedge
-        hd = home + off
-        return math.cos(math.radians(hd)), math.sin(math.radians(hd))
+        n = math.hypot(dx, dy)
+        return (dx / n, dy / n) if n else bdir
 
     # ---- trace one streamline per raster seed (the -bias clipped-line starts) ----
     seeds = [seg[0] for seg in raster_lines(region, raster_pitch(cfg), heading_deg)]
@@ -89,15 +87,20 @@ def streamline_fill(region, cfg, heading_deg: float = 90.0) -> List[List[Point]]
     for sx, sy in seeds:
         pts: List[Point] = [(sx, sy)]
         x, y = sx, sy
+        pdx, pdy = bdir                                # previous step direction (seed = bias)
         for _ in range(max_steps):
             dx, dy = _direction(x, y)
-            if dx * bdir[0] + dy * bdir[1] <= 0.05:   # monotonic forward only (SPEC §4.2)
+            # No wedge / forward-only clamp (D13). Only stop on a hard self-reversal
+            # (a ~180 deg cusp the axis can't track) — downstream split_on_curvature /
+            # split_on_winding break the rest; min_len drops anything too short.
+            if dx * pdx + dy * pdy <= -0.5:
                 break
             nx_, ny_ = x + step * dx, y + step * dy
             if not _inside(nx_, ny_):
                 break
             x, y = nx_, ny_
             pts.append((x, y))
+            pdx, pdy = dx, dy
         if _length(pts) >= min_len:
             paths.append(pts)
     return paths

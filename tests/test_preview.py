@@ -34,7 +34,7 @@ def test_plot_layer_one_patch_per_region():
 
     layer = _layer_with_hole()
     fig, ax = plt.subplots()
-    plot_layer(layer, ax=ax, show_wedge=False)
+    plot_layer(layer, ax=ax, show_home=False)
     assert len(ax.patches) == 1               # one region -> one (holed) patch
     assert ax.get_aspect() == 1.0             # equal aspect
     assert "Z=0.100" in ax.get_title()
@@ -46,33 +46,41 @@ def test_plot_layer_accepts_bare_region_list():
 
     fig, ax = plt.subplots()
     regions = [Polygon([(0, 0), (5, 0), (5, 5), (0, 5)])]
-    plot_layer(regions, ax=ax, show_wedge=False)
+    plot_layer(regions, ax=ax, show_home=False)
     assert len(ax.patches) == 1
     plt.close(fig)
 
 
-def test_plot_layer_wedge_rays_at_home_plus_minus_half_default():
+def test_plot_layer_draws_home_reference_arrow():
+    # D13: no wedge fan — a single +Y home-heading reference arrow (the axis zero).
     import matplotlib.pyplot as plt
+    from shapely.ops import unary_union
 
     layer = _layer_with_hole()
     fig, ax = plt.subplots()
-    plot_layer(layer, ax=ax, cfg=Config(), show_wedge=True)
-    # Two dashed wedge-boundary rays, at home ± half = 90 ± 45 = {45, 135} deg.
-    assert len(ax.lines) == 2
-    angles = sorted(_line_heading_deg(ln) for ln in ax.lines)
-    assert angles == pytest.approx([45.0, 135.0])
+    plot_layer(layer, ax=ax, cfg=Config(), show_home=True)
+    assert any(t.get_text() == "A=0" for t in ax.texts)       # the home-ref label
+    union = unary_union(layer.regions)
+    cx, cy = union.centroid.x, union.centroid.y
+    ann = next(t for t in ax.texts if t.get_text() == "A=0")
+    tx, ty = ann.xy                                            # arrow tip
+    assert math.degrees(math.atan2(ty - cy, tx - cx)) == pytest.approx(90.0)  # +Y home
     plt.close(fig)
 
 
-def test_plot_layer_wedge_rays_follow_config_not_hardcoded():
+def test_plot_layer_home_reference_follows_config():
     import matplotlib.pyplot as plt
+    from shapely.ops import unary_union
 
-    cfg = Config(c_axis=CAxisCfg(home_heading_deg=60.0, wedge_half_angle_deg=30.0))
+    cfg = Config(c_axis=CAxisCfg(home_heading_deg=60.0))
     layer = _layer_with_hole()
     fig, ax = plt.subplots()
-    plot_layer(layer, ax=ax, cfg=cfg, show_wedge=True)
-    angles = sorted(_line_heading_deg(ln) for ln in ax.lines)
-    assert angles == pytest.approx([30.0, 90.0])  # 60 ± 30, proves config flow
+    plot_layer(layer, ax=ax, cfg=cfg, show_home=True)
+    union = unary_union(layer.regions)
+    cx, cy = union.centroid.x, union.centroid.y
+    ann = next(t for t in ax.texts if t.get_text() == "A=0")
+    tx, ty = ann.xy
+    assert math.degrees(math.atan2(ty - cy, tx - cx)) == pytest.approx(60.0)  # config home
     plt.close(fig)
 
 

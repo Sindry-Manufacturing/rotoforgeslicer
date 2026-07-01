@@ -17,7 +17,9 @@ from typing import List, Optional
 from ..config import Config
 from ..fill.curvature import min_radius
 from ..fill.raster import raster_lines, raster_pitch
-from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, in_wedge
+from ..fill.wedge import (
+    heading_deg_from_vector, heading_to_a_deg, unwrap_headings, winding_shift,
+)
 from ..process.extrusion import e_per_path_mm
 from ..process.screener import OperatingPoint
 
@@ -81,7 +83,23 @@ class Pass:
                 for a, b in self.segments()]
 
     def segment_a_degs(self, c_axis) -> List[float]:
+        """Naive per-segment A (each from its own heading; may wrap at ±180)."""
         return [heading_to_a_deg(h, c_axis) for h in self.segment_headings_deg()]
+
+    def axis_angles(self, c_axis) -> List[float]:
+        """Continuous, in-range rotary A per segment — winding-resolved (D13).
+
+        The travel headings are unwrapped (no ±360 jumps), mapped to A, then shifted by
+        a whole turn so the band sits inside the usable axis range ``[a_min, a_max]``.
+        Within a pass A therefore evolves continuously and never wraps; this is what the
+        emitter commands and what the winding-range validation checks. The planner has
+        already split the path (``split_on_winding``) so the band fits one winding.
+        """
+        cont = unwrap_headings(self.segment_headings_deg())
+        a_cont = [heading_to_a_deg(t, c_axis) for t in cont]
+        shift = winding_shift(min(a_cont), max(a_cont),
+                              c_axis.a_min_deg, c_axis.a_max_deg)
+        return [a + shift for a in a_cont]
 
 
 @dataclass
@@ -183,15 +201,67 @@ def _polyline_len(pts) -> float:
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
 
 
+def _band_fits(lo: float, hi: float, a_min: float, a_max: float,
+               tol: float = 1e-6) -> bool:
+    """True if the continuous A-band ``[lo, hi]`` can be shifted by a whole turn to sit
+    entirely inside ``[a_min, a_max]``.
+
+    A band wider than the range never fits. A band that *straddles the linear ±range
+    seam* may not fit even when it is narrower than the range — the axis cannot sweep
+    continuously past its stop, so that crossing needs an airborne unwind. The condition
+    is exactly: some integer winding ``k`` has ``a_min ≤ lo+360k`` and ``hi+360k ≤ a_max``.
+    """
+    k_lo = math.ceil((a_min - lo) / 360.0 - tol)
+    k_hi = math.floor((a_max - hi) / 360.0 + tol)
+    return k_lo <= k_hi
+
+
+def split_on_winding(points, c_axis, tol: float = 1e-6):
+    """Break a polyline where the accumulated axis angle can no longer be wound into the
+    usable range (D13).
+
+    The whole head rotates with the tangent, so a heading sweep drives the C axis along a
+    continuous (unwrapped) A-band. Track that band; whenever including the next segment
+    would make it impossible to seat the band in ``[a_min, a_max]`` at any single winding
+    (see ``_band_fits``), cut there and start a new sub-path. Each returned sub-path can
+    be wound into range (so ``Pass.axis_angles`` seats it); the cut between sub-paths is
+    an **airborne unwind** (a pass boundary — the emitter lifts and reorients A between
+    passes). A closed loop (~360° sweep) stays one pass only when the range can wind the
+    whole turn; on a tighter range it splits into arcs + unwinds.
+    """
+    pts = [tuple(p) for p in points]
+    if len(pts) < 3:
+        return [pts]
+    a_min, a_max = c_axis.a_min_deg, c_axis.a_max_deg
+    cont = unwrap_headings([heading_deg_from_vector(b[0] - a[0], b[1] - a[1])
+                            for a, b in zip(pts, pts[1:])])
+    a_cont = [heading_to_a_deg(t, c_axis) for t in cont]   # one A per segment
+    subs: List[list] = []
+    cur = [pts[0], pts[1]]
+    lo = hi = a_cont[0]
+    for i in range(1, len(a_cont)):
+        a = a_cont[i]
+        nlo, nhi = min(lo, a), max(hi, a)
+        if not _band_fits(nlo, nhi, a_min, a_max, tol):
+            subs.append(cur)
+            cur = [pts[i], pts[i + 1]]
+            lo = hi = a
+        else:
+            cur.append(pts[i + 1])
+            lo, hi = nlo, nhi
+    subs.append(cur)
+    return subs
+
+
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                e_per_path: float, heading_deg: float = 90.0) -> LayerPlan:
-    """Build one layer's passes — straight +Y raster, or curved streamlines (SPEC §4.2)."""
-    a_deg = heading_to_a_deg(heading_deg, cfg.c_axis)
-    if not in_wedge(a_deg, cfg.c_axis):
-        raise ValueError(
-            f"fill heading {heading_deg} deg -> A={a_deg:.1f} deg outside the "
-            f"+/-{cfg.c_axis.wedge_half_angle_deg} deg wedge (SPEC §4.1)")
+    """Build one layer's passes — bidirectional raster, or curved streamlines (D13).
 
+    No wedge: every heading is depositable. Curved paths are split first by the slew
+    limit (``R >= R_min``, SPEC §4.3) and then by the usable axis range
+    (``split_on_winding``), so every emitted pass is legal; the breaks are airborne
+    reorients/unwinds. ``heading_deg`` is only the *base* hatch direction.
+    """
     op = operating_point
     min_len = cfg.process.min_deposit_len_mm
     passes: List[Pass] = []
@@ -203,24 +273,32 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
         v_s = op.traverse_mm_min / 60.0
         for region in layer.regions:
             for path in streamline_fill(region, cfg, heading_deg=heading_deg):
-                # break where the turn is tighter than the slew limit allows (SPEC §4.3)
-                for sub in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
-                    if _polyline_len(sub) >= min_len:
-                        passes.append(Pass.curved(
-                            sub, z=layer.z, rpm=op.rpm,
-                            traverse_mm_min=op.traverse_mm_min,
-                            e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+                # slew limit first (SPEC §4.3), then winding range (D13)
+                for sub_c in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
+                    for sub in split_on_winding(sub_c, cfg.c_axis):
+                        if _polyline_len(sub) >= min_len:
+                            passes.append(Pass.curved(
+                                sub, z=layer.z, rpm=op.rpm,
+                                traverse_mm_min=op.traverse_mm_min,
+                                e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+        # streamlines have no inherent deposit order: lead away from laid material (§4.6)
+        passes = order_passes_lead_away(passes)
     else:  # raster
         pitch = raster_pitch(cfg)
         for region in layer.regions:
             for start, end in raster_lines(region, pitch, heading_deg=heading_deg,
-                                           min_len=min_len):
+                                           min_len=min_len,
+                                           bidirectional=cfg.fill.raster_bidirectional):
                 passes.append(Pass(
-                    start=start, end=end, z=layer.z, a_deg=a_deg, rpm=op.rpm,
-                    traverse_mm_min=op.traverse_mm_min, e_per_path_mm=e_per_path))
+                    start=start, end=end, z=layer.z,
+                    a_deg=heading_to_a_deg(
+                        heading_deg_from_vector(end[0] - start[0], end[1] - start[1]),
+                        cfg.c_axis),
+                    rpm=op.rpm, traverse_mm_min=op.traverse_mm_min,
+                    e_per_path_mm=e_per_path))
+        # raster_lines already returns lines left-to-right; bidirectional alternation IS
+        # the deposit order (boustrophedon), so keep it rather than re-sorting (D13).
 
-    # Pass ordering (SPEC §4.6): lead away from already-laid material.
-    passes = order_passes_lead_away(passes)
     return LayerPlan(index=layer.index, z=layer.z, passes=passes)
 
 

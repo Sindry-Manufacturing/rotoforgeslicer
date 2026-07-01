@@ -20,18 +20,17 @@ def _length(path):
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(path, path[1:]))
 
 
-def test_streamlines_obey_wedge_and_forward():
+def test_streamlines_are_length_clipped_and_biased():
+    # D13: no wedge clamp and no hard forward-only rule. The field is still +Y-biased,
+    # so on a rectangle the streamlines run forward in +Y; length is enforced here.
     cfg = Config()
     region = Polygon([(0, 0), (20, 0), (20, 30), (0, 30)])
     paths = streamline_fill(region, cfg, heading_deg=90.0)
     assert paths
-    home, wedge = cfg.c_axis.home_heading_deg, cfg.c_axis.wedge_half_angle_deg
     for path in paths:
         assert len(path) >= 2
         assert _length(path) >= cfg.process.min_deposit_len_mm
-        assert path[-1][1] >= path[0][1]                       # net forward (+Y)
-        for h in _seg_headings(path):
-            assert home - wedge - 1e-6 <= h <= home + wedge + 1e-6   # in the wedge
+        assert path[-1][1] >= path[0][1] - 1e-6                # +Y-biased net travel
 
 
 def test_streamlines_curve_to_follow_a_disc():
