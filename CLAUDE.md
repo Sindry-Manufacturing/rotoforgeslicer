@@ -43,7 +43,7 @@ build. The emitter must **prove** none are violated (SPEC §6.3):
    solely by the slew rate (`R ≥ v/ω_C`, invariant 6) and the C axis's usable
    continuous angular range `[a_min_deg, a_max_deg]` (no full 360°) — track accumulated
    axis angle and insert **airborne unwinds** when a sweep would exceed it. Use
-   `fill.wedge` (heading↔A + `within_axis_range` + winding) and `toolpath.passplan`
+   `fill.heading` (heading↔A + `within_axis_range` + winding) and `toolpath.passplan`
    (`split_on_winding`). See `docs/DECISIONS.md` D13.
 4. **Monotonic E.** Wire never retracts. Pass-to-pass separation is a mechanical
    cut at a lead-out, not negative E.
@@ -74,7 +74,7 @@ bash packaging/build_linux.sh     # one-file exe (Windows: packaging\build_windo
 
 ## Already implemented — build on these, don't rewrite
 
-config loading, `fill/wedge.py`, `fill/curvature.py`, `process/extrusion.py`,
+config loading, `fill/heading.py`, `fill/curvature.py`, `process/extrusion.py`,
 `process/screener.py`, `toolpath/statemachine.py` (the grinding invariant),
 `emit/templates.py`, and the validators in `emit/rrf.py`. 15 tests green.
 

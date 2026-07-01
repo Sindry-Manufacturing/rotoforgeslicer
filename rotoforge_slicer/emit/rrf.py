@@ -19,7 +19,7 @@ from typing import Iterable, List
 
 from ..config import CAxisCfg, Config
 from ..fill.curvature import r_min
-from ..fill.wedge import heading_deg_from_vector, heading_to_a_deg, within_axis_range
+from ..fill.heading import heading_deg_from_vector, heading_to_a_deg, within_axis_range
 from ..toolpath.statemachine import assert_contact_invariant  # noqa: F401 (re-exported)
 from . import templates
 

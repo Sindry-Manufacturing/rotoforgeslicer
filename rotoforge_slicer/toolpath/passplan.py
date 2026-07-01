@@ -17,7 +17,7 @@ from typing import List, Optional
 from ..config import Config
 from ..fill.curvature import min_radius
 from ..fill.raster import raster_lines, raster_pitch
-from ..fill.wedge import (
+from ..fill.heading import (
     heading_deg_from_vector, heading_to_a_deg, unwrap_headings, winding_shift,
 )
 from ..process.extrusion import e_per_path_mm
@@ -259,6 +259,31 @@ def split_on_winding(points, c_axis, tol: float = 1e-6):
             lo, hi = nlo, nhi
     subs.append(cur)
     return subs
+
+
+def plan_axis_winding(passes, c_axis, tol: float = 1e-6):
+    """Core winding manager (D13 / SPEC §4.1) — choose each pass's starting winding and
+    insert airborne unwinds. **Not yet implemented.**
+
+    Winding management is a core planner function under D13. For each pass this will:
+
+    * pick the **starting winding** — the ``θ − home_heading ± 360k`` that lands the
+      pass's first heading inside ``[c_axis.a_min_deg, c_axis.a_max_deg]`` while leaving
+      the most rotation room for that pass's heading sweep;
+    * track the **accumulated axis angle** across the pass and insert an **airborne
+      unwind** (a lift + reorient at a pass boundary) wherever continuing would drive
+      ``A`` past a stop;
+    * prefer the **shortest legal rotation** between consecutive passes.
+
+    Today ``split_on_winding`` only detects where a continuous A-band can no longer be
+    seated, and ``Pass.axis_angles`` seats each sub-path via ``winding_shift``
+    (start-agnostic). This function will supersede that ad-hoc seating with explicit,
+    optimal starting-winding selection — closing the "closed-loop-in-one-pass" gap
+    noted in DECISIONS D13.
+    """
+    raise NotImplementedError(
+        "pass-planner winding management (starting-winding selection + airborne "
+        "unwinds) is not implemented yet — SPEC §4.1 / DECISIONS D13")
 
 
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,

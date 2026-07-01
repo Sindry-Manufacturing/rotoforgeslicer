@@ -38,7 +38,7 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.gui.model
     import rotoforge_slicer.pipeline
     import rotoforge_slicer.fill.raster
-    import rotoforge_slicer.fill.wedge
+    import rotoforge_slicer.fill.heading
     import rotoforge_slicer.fill.curvature
     import rotoforge_slicer.fill.streamline
     import rotoforge_slicer.toolpath.passplan

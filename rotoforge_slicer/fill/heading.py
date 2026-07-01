@@ -10,8 +10,6 @@ deposition meaning. Travel-direction headings are degrees CCW from +X. The only
 per-axis limits are the slew rate (``fill.curvature``) and the usable **continuous
 angular range** ``[a_min_deg, a_max_deg]`` (no full 360°): a pass's accumulated axis
 angle must stay inside that range, else the path breaks with an airborne unwind.
-
-(The module keeps its legacy filename; it is no longer about a wedge.)
 """
 from __future__ import annotations
 

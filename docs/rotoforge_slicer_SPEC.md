@@ -11,7 +11,7 @@
 
 A **custom slicer + toolpath generator** for the **Rotoforge** AFRB (Additive Friction Rotational Bonding / friction wire-deposition) machine. It converts a 3D mesh into **RepRapFirmware (RRF) G-code** that drives X, Y, Z, the rotary wheel axis (firmware letter **A**, functionally a **C** axis about Z), and the wire feeder **E**.
 
-This is **not** a normal FFF slicer. The deposition physics and the machine kinematics impose hard constraints that reshape every stage of the pipeline. The single most important fact: **the rotary axis turns about Z, so slicing stays planar (flat Z layers)** — but the in-plane toolpaths are heavily constrained (directional tangential tool, limited rotation, no closed loops, a contact state machine that can *destroy* material if violated, and a constant-spindle-revs-per-mm requirement tied to an external process-window file).
+This is **not** a normal FFF slicer. The deposition physics and the machine kinematics impose hard constraints that reshape every stage of the pipeline. The single most important fact: **the rotary axis turns about Z, so slicing stays planar (flat Z layers)** — but the in-plane toolpaths are heavily constrained (a tangential tool that must point along travel, a limited C-axis rotation range, a contact state machine that can *destroy* material if violated, and a constant-spindle-revs-per-mm requirement tied to an external process-window file).
 
 The goal is to **build the new constraint/planning/emission layers on top of a proven open geometry stack**, and to **reuse the validated G-code primitives** from the existing generator (`afrb_playground_gui(2).py`) rather than reinventing them.
 
@@ -70,7 +70,7 @@ These are **hard invariants**. Violating them either ruins the part or **grinds 
 2. **Constant spindle-revs-per-mm is critical.** `revs_per_mm = RPM / traverse_mm_per_min`. This is exactly the screener's `n_over_v` column (§5). Holding it constant = staying on a fixed-slope ray through the origin of the RPM × traverse map.
 3. **Two-state contact model, with a forbidden trap** (§4.4). A spinning wheel that is **in contact while not moving, moving too slowly, or not feeding wire is *subtractive*** — it grinds a 1 mm slot. All dwells (startup settle, between-pass spindle stabilization) must happen **airborne** (wheel lifted, spinning, not touching).
 4. **Wire feed is monotonic.** `E` never decreases during a job. Wire separation between passes is **mechanical (cut) at a lead-out**, not retraction.
-5. **Directional tangential tool.** The rim is directional; the A axis must point along the path tangent. Because the feeder+wheel rotate together, the leading wire always points along travel.
+5. **Tangential tool.** The A axis points along the path tangent; because the feeder + wheel rotate together as one unit, the leading wire always points along travel. **No privileged direction — every heading deposits identically** (see item 6).
 6. **Tangential tool, no privileged direction (D13).** The feeder + wheel rotate as one unit on the C axis, so the wheel points along travel at every instant and **every heading deposits identically — there is no forbidden direction and no "wedge"**. `A` is always commanded equal to the travel heading (commanded drift ≈ 0). **+Y home is only the axis-zero reference** after homing; it has no deposition meaning. The only C-axis limits are (a) the **slew rate** (`R ≥ v/ω_C`, §4.3) and (b) the **usable continuous angular range** `[c_axis.a_min_deg, c_axis.a_max_deg]` (≈ ±180°, **no full 360°** — head obstructions): a pass's accumulated axis angle must stay inside it, and a path that would drive `A` past a stop is broken with an **airborne unwind**. Consequently **closed contours are feasible** (a convex loop is the heading sweeping ~360°, in one pass if the range can wind the whole turn, else arcs + unwinds), and **raster may be bidirectional**. (Supersedes the earlier ±45°→±90° "deposition wedge / −Y impossible / unidirectional" model — see DECISIONS D13.)
 7. **Lift ≥ ~10 mm** above the last pass height between passes; **shortest practical deposit ~6 mm**; a **lead-out is required** so the wire can be cut after each pass.
 
@@ -369,7 +369,7 @@ Single window, three regions:
 2. **Preview (center, matplotlib canvas):**
    - Per-layer **top-down** view: deposited passes colored by pass, **heading arrows**, the **+Y home reference** (axis zero — no wedge, D13), lifts/travels dashed, lead-outs marked.
    - Layer slider; play/scrub. Optional 3D toggle (matplotlib 3D; pyvista if the optional dep is present).
-   - **Validation overlay:** highlight any wedge/curvature/collision/contact violations in red with tooltips.
+   - **Validation overlay:** highlight any axis-range/curvature/collision/contact violations in red with tooltips.
 3. **Actions (bottom):** "Slice", progress, "Save G-code…", optional "Upload to duet3.local". A log pane showing validation results (§6.3).
 
 Keep it genuinely usable: non-blocking slicing (worker thread), clear error messages, remembers last config/paths.
@@ -396,7 +396,7 @@ rotoforge_slicer/
       trimesh_backend.py      # load, repair, section_multiplane
       slicing.py              # Path2D -> shapely region polygons per layer
     fill/
-      wedge.py                # heading<->A, axis-range + winding helpers (D13; legacy name)
+      heading.py              # heading<->A, axis-range + winding helpers (D13)
       raster.py               # bidirectional raster
       streamline.py           # +Y-biased guidance-field streamlines, pyclipr-clipped
       curvature.py            # R_min(v), polyline curvature, path splitting
@@ -420,7 +420,7 @@ rotoforge_slicer/
     build_linux.sh
     hooks/
   tests/
-    test_wedge.py  test_curvature.py  test_screener.py
+    test_curvature.py  test_screener.py
     test_statemachine.py  test_emit_validations.py
     test_reproduce_yline.py            # M2 parity with afrb_yline_*
   .github/workflows/build.yml
@@ -435,7 +435,7 @@ class GeometryBackend(ABC):
     def bounds(self, mesh) -> tuple[tuple[float, float, float], tuple[float, float, float]]: ...
     def slice(self, mesh, z_heights: list[float]) -> list["LayerRegions"]: ...
 
-# fill/wedge.py
+# fill/heading.py
 def heading_to_a_deg(theta_deg: float, cfg: CAxisCfg) -> float: ...
 def within_axis_range(a_deg: float, cfg: CAxisCfg) -> bool: ...   # D13: no wedge
 
