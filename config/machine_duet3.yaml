@@ -76,6 +76,6 @@ collision:                       # 2.5D swept-disc + leading-wire check (SPEC §
 fill:                            # fill strategy (SPEC §4.2)
   mode: raster                   # raster | streamline
   crosshatch: false              # alternate the deposition heading between layers
-  crosshatch_angle_deg: 30.0     # +/- offset from +Y on alternating layers (<= wedge half-angle)
+  crosshatch_angle_deg: 30.0     # +/- heading offset on alternating layers (any angle; no wedge -- D13)
   streamline_step_mm: 0.5        # streamline integration step
   streamline_curl: 0.6           # 0 = straight +Y; higher = follows the region boundary more

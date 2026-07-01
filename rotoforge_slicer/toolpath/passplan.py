@@ -236,6 +236,14 @@ def split_on_winding(points, c_axis, tol: float = 1e-6):
     cont = unwrap_headings([heading_deg_from_vector(b[0] - a[0], b[1] - a[1])
                             for a, b in zip(pts, pts[1:])])
     a_cont = [heading_to_a_deg(t, c_axis) for t in cont]   # one A per segment
+    # A single heading whose A cannot be wound into range at ANY winding is physically
+    # unreachable (range < 360 doesn't cover it) — not splittable. Fail early and clearly
+    # rather than emit an out-of-range A that trips the emitter's range validator.
+    for a in a_cont:
+        if not _band_fits(a, a, a_min, a_max, tol):
+            raise ValueError(
+                f"segment heading maps to A={a:.1f} deg, unreachable within the axis range "
+                f"[{a_min}, {a_max}] at any winding — widen the range or reorient the part (D13)")
     subs: List[list] = []
     cur = [pts[0], pts[1]]
     lo = hi = a_cont[0]

@@ -57,6 +57,37 @@ def test_gentle_curve_within_limit_emits_ok():
     assert "M84" in g
 
 
+def test_emit_rejects_180_deg_in_pass_cusp():
+    # D13 safety: a hairpin (exact 180 deg reversal within a pass) is a >=180 deg
+    # in-contact swing, never a valid single G1. Even with a range wide enough to seat
+    # both windings, the continuity validator must reject it (the exact-180 gap fix).
+    from rotoforge_slicer.config import CAxisCfg
+    cfg = _cfg()
+    cfg.c_axis = CAxisCfg(a_min_deg=-360.0, a_max_deg=360.0, max_speed_deg_s=360.0)
+    pts = [(190, 100), (198, 100), (190, 100)]            # out +X then back -X (180 deg cusp)
+    p = Pass.curved(pts, z=0.06, rpm=5000, traverse_mm_min=120.0,
+                    e_per_path_mm=1.0, c_axis=cfg.c_axis)
+    plan = ToolpathPlan([LayerPlan(0, 0.06, [p])], 5000, 120.0, 120.0)
+    with pytest.raises(ValueError):
+        GCodeEmitter(cfg).emit(plan)
+
+
+def test_emitted_deposition_a_equals_validated_axis_angles():
+    # the emitter commands exactly Pass.axis_angles per segment (no divergent re-derivation),
+    # so every full-segment deposition A is one of the validated, winding-resolved values.
+    cfg = _cfg()
+    pts = [(190, 100), (190, 106), (192, 111), (195, 114), (199, 115)]
+    p = Pass.curved(pts, z=0.06, rpm=5000, traverse_mm_min=120.0,
+                    e_per_path_mm=1.0, c_axis=cfg.c_axis)
+    g = GCodeEmitter(cfg).emit(_curved_plan(cfg, pts))
+    validated = {round(a, 2) for a in p.axis_angles(cfg.c_axis)}
+    # deposition G1s carry no Z (the plunge and lead-out do); those use the segment A
+    dep_a = [round(float(m), 2) for l in g.splitlines()
+             if l.startswith("G1") and " Z" not in l
+             for m in re.findall(r" A(-?\d+\.?\d*)", l)]
+    assert dep_a and all(a in validated for a in dep_a)
+
+
 def test_tight_curve_emits_when_no_curvature_limit_set():
     # the default config has max_speed_deg_s=0 -> R_min=inf -> NO limit; a curved pass
     # (even a tight one) must emit, not be rejected. Pins the inf-guard (rrf.py).

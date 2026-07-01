@@ -481,7 +481,7 @@ Each milestone ends with tests green and a runnable artifact.
 1. Given a test STL + a FRAM screener CSV + the config, the CLI emits valid RRF G-code that passes all §6.3 validations.
 2. **Revs/mm is constant within every pass**, and equals the selected ray (assert from emitted RPM/feed).
 3. **No emitted in-contact move violates the contact invariant**; **no dwell occurs in contact**; **E is monotonic**.
-4. **Every deposition heading is within ±90° of +Y** (and every commanded A within the ±180° mechanical limit); every pass satisfies `R ≥ R_min(v)`.
+4. **Every commanded A** (deposition + airborne) lies within the usable axis range `[a_min_deg, a_max_deg]` and evolves continuously within each pass (over-winding paths split with an airborne unwind); every pass satisfies `R ≥ R_min(v)`. (No wedge — D13.)
 5. M2 parity: emitter reproduces the existing `afrb_yline_*` G-code for the same inputs.
 6. The GUI loads a mesh, previews layers with heading arrows + the +Y home reference, flags violations, and saves G-code.
 7. `RotoforgeSlicer.exe` and the Linux binary launch by double-click on a clean machine and run a slice end-to-end.

@@ -54,9 +54,11 @@ def _fmt(v: float) -> str:
 
 
 def _split_polyline(pts, dist):
-    """(point at ``dist`` along the polyline, [that point, ...rest])."""
+    """(point at ``dist`` along the polyline, [that point, ...rest], index of the
+    original segment the split point lands on). The returned index lets the emitter map
+    each deposit sub-segment back to its original segment's validated axis angle."""
     if dist <= 1e-9:
-        return pts[0], list(pts)
+        return pts[0], list(pts), 0
     acc = 0.0
     for i in range(len(pts) - 1):
         (ax, ay), (bx, by) = pts[i], pts[i + 1]
@@ -64,9 +66,9 @@ def _split_polyline(pts, dist):
         if acc + seg >= dist:
             t = (dist - acc) / seg if seg > 0 else 0.0
             pp = (ax + t * (bx - ax), ay + t * (by - ay))
-            return pp, [pp] + list(pts[i + 1:])
+            return pp, [pp] + list(pts[i + 1:]), i
         acc += seg
-    return pts[-1], [pts[-1]]
+    return pts[-1], [pts[-1]], len(pts) - 2
 
 
 def _unit(p0, p1):
@@ -188,8 +190,12 @@ class GCodeEmitter:
                 self._validate_pass_geometry(p, v, cfg)
 
                 start = pts[0]
-                # Winding-resolved start A (in range); the pass walks continuously from it.
-                a_start = p.axis_angles(cfg.c_axis)[0]
+                # The winding-resolved, in-range, continuous A per ORIGINAL segment — the
+                # exact sequence _validate_pass_geometry just proved legal. The emitter
+                # commands these directly (no independent re-derivation), so the emitted A
+                # is provably identical to the validated A.
+                a_segs = p.axis_angles(cfg.c_axis)
+                a_start = a_segs[0]
 
                 # 1. airborne reposition (wheel up) to the pass start, first heading set
                 if cur_z != lift_z:
@@ -217,7 +223,10 @@ class GCodeEmitter:
                 # 4. TRANSITION_IN: moving plunge over the first `plunge` mm of the path,
                 #    descending to layer Z. F-compensated for the Z descent (§6.2/§4.4).
                 plunge = min(lead_in, 0.5 * p.length_mm)
-                pp, deposit_pts = _split_polyline(pts, plunge)
+                pp, deposit_pts, seg0 = _split_polyline(pts, plunge)
+                # The plunge is one short transition move (start -> pp), possibly spanning
+                # several original segments; its A is the chord heading kept continuous
+                # from a_start (in range — it lies within the pass's A band).
                 a_pl = (_continuity_adjust(_seg_a(start, pp, cfg.c_axis), a_start)
                         if plunge > 1e-9 else a_start)
                 de_plunge = p.e_per_path_mm * plunge
@@ -233,28 +242,26 @@ class GCodeEmitter:
                         in_contact=True, xy_speed_mm_s=v_s,
                         v_grind_floor_mm_s=floor_s, e_feeding=de_plunge > 0)
 
-                # 5. DEPOSITING: one G1 per polyline segment. A tracks the travel heading
-                #    (tangential tool, D13), kept continuous (no ±360 jump) by adjusting
-                #    each segment's raw A toward the previous. Each segment is planar
-                #    (ΔZ=0) so F == the XY traverse (the rotary is slaved; the §6.2
-                #    combined-move feedrate is a calibration item, SPEC §13).
+                # 5. DEPOSITING: one G1 per polyline segment. A is the travel heading
+                #    (tangential tool, D13). Deposit sub-segment ``m`` maps to original
+                #    segment ``seg0 + m``, so its A is taken straight from ``a_segs`` — the
+                #    exact winding-resolved, continuous sequence _validate_pass_geometry
+                #    proved legal (emitted A == validated A, no independent re-derivation).
+                #    Each segment is planar (ΔZ=0) so F == the XY traverse (the rotary is
+                #    slaved; the §6.2 combined-move feedrate is a calibration item, §13).
                 prev = deposit_pts[0]
-                a_prev = a_pl
-                for nxt in deposit_pts[1:]:
+                for m, nxt in enumerate(deposit_pts[1:]):
                     seg_len = math.hypot(nxt[0] - prev[0], nxt[1] - prev[1])
-                    if seg_len <= 1e-9:
-                        continue
-                    a_cur = _continuity_adjust(_seg_a(prev, nxt, cfg.c_axis), a_prev)
-                    de = p.e_per_path_mm * seg_len
-                    move("G1", x=nxt[0], y=nxt[1], a=a_cur,
-                         e=None if dry else de, f=f_dep, cur_z=cur_z)
-                    a_prev = a_cur
-                    if not dry:
-                        e_cum += de
-                        e_seq.append(e_cum)
-                        assert_contact_invariant(
-                            in_contact=True, xy_speed_mm_s=v_s,
-                            v_grind_floor_mm_s=floor_s, e_feeding=de > 0)
+                    if seg_len > 1e-9:
+                        de = p.e_per_path_mm * seg_len
+                        move("G1", x=nxt[0], y=nxt[1], a=a_segs[seg0 + m],
+                             e=None if dry else de, f=f_dep, cur_z=cur_z)
+                        if not dry:
+                            e_cum += de
+                            e_seq.append(e_cum)
+                            assert_contact_invariant(
+                                in_contact=True, xy_speed_mm_s=v_s,
+                                v_grind_floor_mm_s=floor_s, e_feeding=de > 0)
                     prev = nxt
 
                 # 6. TRANSITION_OUT: continue past the last point along the last heading
@@ -309,10 +316,14 @@ class GCodeEmitter:
         for a in a_segs:
             validate_axis_angle(a, cfg.c_axis)
         for a0, a1 in zip(a_segs, a_segs[1:]):
-            if abs(a1 - a0) > 180.0 + 1e-6:
+            # unwrap keeps consecutive A within (-180, 180]; a step that REACHES ±180 is a
+            # hairpin cusp — a ≥180° in-contact swing that is never a valid single G1 and
+            # must have been split. (Strict `> 180+eps` would miss the exact-180° reversal.)
+            if abs(a1 - a0) > 180.0 - 1e-6:
                 raise ValueError(
-                    f"A axis jumps {a1 - a0:.1f} deg within a pass (winding discontinuity)"
-                    " — the pass should have been split (SPEC §4.3 / D13)")
+                    f"A axis swings {a1 - a0:.1f} deg between deposition segments — a ≥180°"
+                    " in-contact reversal (cusp) is never a valid single move; split it "
+                    "(SPEC §4.3 / D13)")
         r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
         if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
             raise ValueError(

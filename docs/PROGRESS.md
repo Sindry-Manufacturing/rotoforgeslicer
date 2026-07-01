@@ -10,7 +10,7 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 - **M3 — process window** ✅ FRAM screener handshake, widest-contiguous revs/mm ray, per-pass airborne RPM placement.
 - **M4 — contact & collision** ✅ 2.5D swept-disc + leading-wire height-field check, lead-away pass ordering.
 - **M5 — curved fill** ✅ curvature/slew limit (`max_speed_deg_s=360`), +Y-biased streamline fill, cross-layer crosshatch, per-segment curved emission with `R ≥ R_min`.
-- **M6 — GUI** ✅ PySide6 app: open mesh, tweak process fields + C-axis wedge, slice off-thread, scrub layers, inspect toolpath, save validated G-code.
+- **M6 — GUI** ✅ PySide6 app: open mesh, tweak process fields + C-axis A-min/A-max angular range, slice off-thread, scrub layers, inspect toolpath, save validated G-code.
 - **M7 — packaging** ✅ one-file PyInstaller exe (verified build + launch) + per-OS build scripts + CI matrix.
 
 ## Recent changes

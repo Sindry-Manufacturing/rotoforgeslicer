@@ -246,6 +246,19 @@ def test_closed_loop_one_pass_when_range_can_wind_the_whole_turn():
     assert len(split_on_winding(loop, phys)) >= 2
 
 
+def test_split_on_winding_rejects_an_unreachable_heading():
+    # With a narrow range, a heading whose A cannot be wound into range at ANY winding is
+    # physically unreachable (not splittable) — fail early and clearly, don't emit a bad A.
+    from rotoforge_slicer.config import CAxisCfg
+    from rotoforge_slicer.toolpath.passplan import split_on_winding
+
+    narrow = CAxisCfg(a_min_deg=-30.0, a_max_deg=30.0)
+    # +Y then down-right (heading ~ -45 deg -> A ~ -135, unreachable at +/-30)
+    path = [(0.0, 0.0), (0.0, 5.0), (3.0, 2.0)]
+    with pytest.raises(ValueError):
+        split_on_winding(path, narrow)
+
+
 def test_winding_accumulation_never_exceeds_the_range():
     # every split sub-path, once wound, has all its commanded A inside [a_min, a_max] —
     # the planner inserts an unwind (a break) exactly where the band would overrun.

@@ -1,9 +1,17 @@
 # Roadmap Addendum — wedge update, interactive placement, contour tracing
 
+> **§1 SUPERSEDED by D13** (see `docs/CONSTRAINT_MODEL_CORRECTION.md` /
+> `docs/DECISIONS.md` D13). The "±90° deposition wedge + ±180° mechanical limit" model
+> in §1 below was itself a misread of the head geometry: the head rotates as a unit, so
+> there is **no wedge and no privileged direction** — the only C-axis limits are the slew
+> rate and the usable angular range `[a_min_deg, a_max_deg]`. §1 is kept for history; do
+> not apply it. §2 (M11) and §3 (M17) still stand, but read them with "no wedge" in mind
+> (the M11 heatmap metric becomes break/unwind + curvature feasibility, not wedge coverage).
+
 Supplements `docs/USABILITY_ROADMAP.md` and `docs/rotoforge_slicer_SPEC.md`.
-Three changes: (1) the C-axis deposition wedge widened to ~±90° with a separate
-±180° mechanical limit; (2) M11 expanded to interactive graphical placement; (3) a
-new contour/perimeter tracing fill mode (M17).
+Three changes: (1) ~~the C-axis deposition wedge widened to ~±90°~~ *(superseded — see
+D13)*; (2) M11 expanded to interactive graphical placement; (3) a new contour/perimeter
+tracing fill mode (M17).
 
 ---
 
