@@ -70,12 +70,14 @@ class ProcessCfg:
 @dataclass
 class FillCfg:
     """Fill strategy (SPEC §4.2)."""
-    mode: str = "raster"                 # raster | streamline
+    mode: str = "raster"                 # raster | streamline | contour | outline (M17)
     raster_bidirectional: bool = True    # alternate heading 180 deg between lines (D13; no fly-back)
     crosshatch: bool = False             # alternate the heading between layers
     crosshatch_angle_deg: float = 30.0   # +/- heading offset on alternating layers (any angle; no wedge)
     streamline_step_mm: float = 0.5      # streamline integration step
     streamline_curl: float = 0.6         # 0 = straight +Y; higher = more boundary-following
+    perimeter_loops: int = 0             # M17: N wall loops before raster/streamline infill (0 = off)
+    contour_simplify_mm: float = 0.05    # ring simplification tolerance (keeps G-code size sane)
 
 
 @dataclass
@@ -110,6 +112,8 @@ class ScreenerCfg:
     revs_per_mm_mode: str = "auto"   # auto | manual
     revs_per_mm_target: float = 0.0
     revs_per_mm_tol: float = 5.0
+    traverse_target: float = 0.0     # representative-cell traverse (0 = run midpoint);
+                                     # snaps to the nearest stable cell on the ray
 
 
 @dataclass

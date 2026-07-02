@@ -286,41 +286,79 @@ def plan_axis_winding(passes, c_axis, tol: float = 1e-6):
         "unwinds) is not implemented yet — SPEC §4.1 / DECISIONS D13")
 
 
+def _curved_passes(paths, layer_z, cfg: Config, op: OperatingPoint,
+                   e_per_path: float) -> List[Pass]:
+    """The D13 constraint pipeline for curved paths (streamlines, contour rings,
+    perimeter walls): split on the slew limit first (SPEC §4.3), then on the usable
+    axis range (``split_on_winding``); sub-passes below ``min_deposit_len`` drop.
+    Path order is preserved (callers order paths deliberately)."""
+    from ..fill.curvature import split_on_curvature
+
+    min_len = cfg.process.min_deposit_len_mm
+    v_s = op.traverse_mm_min / 60.0
+    out: List[Pass] = []
+    for path in paths:
+        for sub_c in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
+            for sub in split_on_winding(sub_c, cfg.c_axis):
+                if _polyline_len(sub) >= min_len:
+                    out.append(Pass.curved(
+                        sub, z=layer_z, rpm=op.rpm,
+                        traverse_mm_min=op.traverse_mm_min,
+                        e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+    return out
+
+
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                e_per_path: float, heading_deg: float = 90.0) -> LayerPlan:
-    """Build one layer's passes — bidirectional raster, or curved streamlines (D13).
+    """Build one layer's passes — bidirectional raster, curved streamlines, or M17
+    contour/outline rings, plus optional perimeter wall loops (D13).
 
-    No wedge: every heading is depositable. Curved paths are split first by the slew
-    limit (``R >= R_min``, SPEC §4.3) and then by the usable axis range
-    (``split_on_winding``), so every emitted pass is legal; the breaks are airborne
-    reorients/unwinds. ``heading_deg`` is only the *base* hatch direction.
+    No wedge: every heading is depositable. Curved paths (streamlines AND closed
+    contour rings) run the same constraint pipeline: slew split, winding split,
+    min-length drop — the breaks are airborne reorients/unwinds. ``heading_deg`` is
+    only the *base* hatch direction. With ``fill.perimeter_loops > 0`` the infill
+    modes lay the hatch first, then the wall loops (infill lead-outs then cross only
+    not-yet-deposited wall paths); the hatch region is inset past the walls.
     """
     op = operating_point
     min_len = cfg.process.min_deposit_len_mm
+    mode = cfg.fill.mode
     passes: List[Pass] = []
 
-    if cfg.fill.mode == "streamline":
-        from ..fill.curvature import split_on_curvature
-        from ..fill.streamline import streamline_fill
+    if mode in ("contour", "outline"):
+        from ..fill.contour import contour_paths
 
-        v_s = op.traverse_mm_min / 60.0
         for region in layer.regions:
-            for path in streamline_fill(region, cfg, heading_deg=heading_deg):
-                # slew limit first (SPEC §4.3), then winding range (D13)
-                for sub_c in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
-                    for sub in split_on_winding(sub_c, cfg.c_axis):
-                        if _polyline_len(sub) >= min_len:
-                            passes.append(Pass.curved(
-                                sub, z=layer.z, rpm=op.rpm,
-                                traverse_mm_min=op.traverse_mm_min,
-                                e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
-        # streamlines have no inherent deposit order: lead away from laid material (§4.6)
-        passes = order_passes_lead_away(passes)
-    else:  # raster
-        pitch = raster_pitch(cfg)
-        for region in layer.regions:
-            for start, end in raster_lines(region, pitch, heading_deg=heading_deg,
-                                           min_len=min_len,
+            # innermost-first ring order from contour_paths; keep it (SPEC §4.6)
+            passes.extend(_curved_passes(
+                contour_paths(region, cfg, mode=mode), layer.z, cfg, op, e_per_path))
+        return LayerPlan(index=layer.index, z=layer.z, passes=passes)
+
+    # infill modes (raster | streamline), optionally wrapped by perimeter walls
+    from ..fill.contour import inset_interior, perimeter_paths
+
+    loops = cfg.fill.perimeter_loops
+    wall_passes: List[Pass] = []
+    for region in layer.regions:
+        infill_region = inset_interior(region, cfg, loops)
+        if loops > 0:
+            wall_passes.extend(_curved_passes(
+                perimeter_paths(region, cfg), layer.z, cfg, op, e_per_path))
+        if infill_region.is_empty:
+            continue
+
+        if mode == "streamline":
+            from ..fill.streamline import streamline_fill
+
+            region_passes = _curved_passes(
+                streamline_fill(infill_region, cfg, heading_deg=heading_deg),
+                layer.z, cfg, op, e_per_path)
+            # streamlines have no inherent order: lead away from laid material (§4.6)
+            passes.extend(order_passes_lead_away(region_passes))
+        else:  # raster
+            pitch = raster_pitch(cfg)
+            for start, end in raster_lines(infill_region, pitch,
+                                           heading_deg=heading_deg, min_len=min_len,
                                            bidirectional=cfg.fill.raster_bidirectional):
                 passes.append(Pass(
                     start=start, end=end, z=layer.z,
@@ -329,9 +367,10 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
                         cfg.c_axis),
                     rpm=op.rpm, traverse_mm_min=op.traverse_mm_min,
                     e_per_path_mm=e_per_path))
-        # raster_lines already returns lines left-to-right; bidirectional alternation IS
-        # the deposit order (boustrophedon), so keep it rather than re-sorting (D13).
+            # raster_lines already returns lines left-to-right; bidirectional
+            # alternation IS the deposit order (boustrophedon) — keep it (D13).
 
+    passes.extend(wall_passes)      # walls after infill (lead-out crossing order)
     return LayerPlan(index=layer.index, z=layer.z, passes=passes)
 
 

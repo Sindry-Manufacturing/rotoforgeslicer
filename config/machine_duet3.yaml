@@ -55,6 +55,7 @@ screener:
   revs_per_mm_mode: auto         # auto | manual
   revs_per_mm_target: 0.0        # used when mode == manual
   revs_per_mm_tol: 5.0           # rpm/(mm/min)
+  traverse_target: 0.0           # representative-cell traverse on the ray (0 = run midpoint)
 
 gcode:
   preamble_macros: [Hotshoe_300C.g, CPAP_100pct.g]
@@ -74,8 +75,10 @@ collision:                       # 2.5D swept-disc + leading-wire check (SPEC §
   wire_lead_mm: 2.0              # how far the fragile leading wire reaches ahead of contact
 
 fill:                            # fill strategy (SPEC §4.2)
-  mode: raster                   # raster | streamline
+  mode: raster                   # raster | streamline | contour | outline (M17)
   crosshatch: false              # alternate the deposition heading between layers
   crosshatch_angle_deg: 30.0     # +/- heading offset on alternating layers (any angle; no wedge -- D13)
   streamline_step_mm: 0.5        # streamline integration step
   streamline_curl: 0.6           # 0 = straight +Y; higher = follows the region boundary more
+  perimeter_loops: 0             # M17: wall loops before raster/streamline infill (0 = off)
+  contour_simplify_mm: 0.05      # contour ring simplification tolerance (mm)
