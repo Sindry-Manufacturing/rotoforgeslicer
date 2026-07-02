@@ -78,6 +78,19 @@ def build_preview(mesh_path: str, cfg: Config, screener_csv: Optional[str] = Non
     tick(0.25, "slicing layers…")
     model = slice_model(backend, mesh, cfg.process.layer_height_mm)
     model = place_on_bed(model, cfg)
+    return preview_from_model(model, cfg, screener_csv, progress=progress,
+                              source=mesh_path)
+
+
+def preview_from_model(model, cfg: Config, screener_csv: Optional[str] = None,
+                       progress: Optional[Callable[[float, str], None]] = None,
+                       source: str = "") -> SlicePreview:
+    """The pipeline tail for an already-sliced, already-placed model: operating point
+    -> plan -> collision check -> segments -> emit. The studio scene (multi-part GUI
+    placement) enters here — its placement replaces ``place_on_bed``."""
+    def tick(frac, msg):
+        if progress:
+            progress(frac, msg)
 
     op = None
     if screener_csv:
@@ -128,4 +141,4 @@ def build_preview(mesh_path: str, cfg: Config, screener_csv: Optional[str] = Non
     return SlicePreview(cfg=cfg, model=model, plan=plan, segments=segments,
                         collisions=collisions, collisions_by_layer=by_layer,
                         gcode=gcode, validation_error=err,
-                        operating_point=op, source=mesh_path)
+                        operating_point=op, source=source)

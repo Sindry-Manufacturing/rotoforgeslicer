@@ -42,6 +42,17 @@ before slicing. Launch with `rotoforge-slicer-gui [mesh.stl]`;
 `build_linux.sh` and the `.github/` CI matrix — the 526 MB Windows onefile builds and
 launches from a verified spec.
 
+**Studio (M11 core + simulation):** a pyvista/pyvistaqt **3D build-plate GUI**
+(`studio/`) on top of the same pipeline — load **multiple meshes** onto the simulated
+plate, click-select / click-move, tumble/scale via the transform panel (parts always
+drop to the bed; fit/overlap/lead-out issues reported live), slice as arranged
+(GUI placement replaces auto-centring), view the tagged toolpath (U2) in the same
+viewport with per-move-class toggles + a layer scrubber, and run a **kinematic
+simulation** (`studio/simulate.py`): time-parameterized playback with the moving
+head, live wheel-heading arrow (watch the C axis track the tangent), contact state,
+and RPM / traverse / revs-per-mm / E readouts, airborne dwells included. Launch with
+`python -m rotoforge_slicer.studio [mesh.stl ...]`.
+
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
 > `afrb_playground_gui(2).py` generator are not in the repo. The only existing
 > reference output is from an older prototype whose closed perimeters are now
@@ -72,6 +83,7 @@ rotoforge_slicer/      package
   process/             screener CSV, extrusion              [M3 done]
   emit/                RRF G-code emitter, templates        [M2 emitter done]
   gui/                 PySide6 app + matplotlib preview     [M6 done]
+  studio/              pyvista 3D build-plate GUI + kinematic simulation [M11 core]
 config/                machine_duet3.yaml
 docs/                  rotoforge_slicer_SPEC.md
 packaging/             PyInstaller spec + per-OS build scripts

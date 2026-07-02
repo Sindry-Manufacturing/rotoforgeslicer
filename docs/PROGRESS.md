@@ -15,6 +15,27 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Studio — 3D build-plate GUI + kinematic simulation (M11 core) — landed.** New
+  `studio/` package on the existing validated core (no core rewrite — the invariants
+  stay untouched): `scene.py` (pure placement math: pivot-centred transforms,
+  automatic drop-to-bed, fit / lead-out / overlap checks, **multi-part slicing** via
+  per-part repair + trimesh concatenate, placement replacing `place_on_bed`),
+  `simulate.py` (pure kinematic timeline mirroring the emitter's feeds + airborne
+  spindle dwells; monotonic E; per-instant state with wheel-heading recovery),
+  `viewport.py` (pyvista build plate / parts / color-coded tagged toolpath / posed
+  head disc + heading arrow), `app.py` (pyvistaqt window: click-select, click-move,
+  transform panel, off-thread slicing, move-class toggles + layer scrubber, play /
+  pause / speed / scrub with RPM · traverse · revs-per-mm · E readouts).
+  `gui/model.py` grew `preview_from_model` (pipeline tail for scene-sliced models).
+  pyvista + pyvistaqt are now runtime deps. Launch: `python -m rotoforge_slicer.studio`.
+  A multi-agent adversarial review confirmed and fixed 8 defects pre-commit: lead-in E
+  over the plunge **arc** (not chord), a **slew floor** on reorienting travels
+  (`ΔA/ω_C` — a 180° bidirectional flip can't take 20 ms), the lead-out envelope
+  reserved on **all sides** (bidirectional raster leads out −Y), repair-on-**copy**
+  (never mutate the scene's meshes), the worker slicing a scene **snapshot**,
+  stage-boundary slice cancellation on close, **double-click** picking (orbit drags
+  must not teleport parts) with an in-volume guard, and the head drawn as the real
+  **vertical** wheel (rim at contact). 163 tests green.
 - **U2 — tagged toolpath segments + 3D viewer — landed.** New `toolpath/segments.py`
   turns a plan into tagged, fully-3D `ToolpathSegment`s (deposition / lead-in / lead-out /
   liftoff / reset / travel), walking the emitter's §6.1 motion sequence so the drawn
@@ -42,10 +63,10 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Queued (not started)
 
-- **M11 (revised) — interactive placement & orientation:** mouse-driven 3D build-plate
-  viewport (pyvista/pyvistaqt) with transform gizmos; live **reorientation-break / unwind
-  + curvature-feasibility** heatmap (the wedge-coverage metric is gone — D13), drop-to-bed,
-  multi-part placement. Supersedes the original heatmap-only M11.
+- **M11 remainder — placement polish:** the studio delivered the M11 core (3D viewport,
+  multi-part placement, drop-to-bed, click-move). Still open: in-viewport **drag/rotate
+  gizmos** and the live **reorientation-break / unwind + curvature-feasibility heatmap**
+  (the wedge-coverage metric is gone — D13).
 - **M17 (new) — contour / perimeter tracing fill:** concentric offsets, each ring clipped
   to **winding-range arcs** (`perimeter` / `contour` / `outline`). Includes the
   *closed-loop-in-one-pass* refinement — start a ring at a rotational extreme so its ~360°

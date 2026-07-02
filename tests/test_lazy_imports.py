@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 _CHILD = textwrap.dedent(
     """
     import sys
-    HEAVY = {"trimesh", "shapely", "matplotlib", "PySide6", "pyclipr"}
+    HEAVY = {"trimesh", "shapely", "matplotlib", "PySide6", "pyclipr",
+             "pyvista", "pyvistaqt", "vtk", "vtkmodules"}
 
     class Blocker:
         def find_spec(self, name, path=None, target=None):
@@ -46,6 +47,10 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.toolpath.collision
     import rotoforge_slicer.emit.rrf
     import rotoforge_slicer.emit.templates
+    import rotoforge_slicer.studio.scene
+    import rotoforge_slicer.studio.simulate
+    import rotoforge_slicer.studio.viewport
+    import rotoforge_slicer.studio.app
 
     # Pure-python helpers must work with all heavy deps blocked.
     assert rotoforge_slicer.geometry.layer_heights(0.0, 1.0, 0.5) == [0.25, 0.75]
