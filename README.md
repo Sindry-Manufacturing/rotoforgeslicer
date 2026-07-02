@@ -39,8 +39,9 @@ before slicing. Launch with `rotoforge-slicer-gui [mesh.stl]`;
 **M7**: one-file PyInstaller executables (`packaging/rotoforge_slicer.spec` +
 `launch_gui.py` frozen entry point, bundling the lazy package submodules and the
 `config/` YAML read back via `sys._MEIPASS`) built per-OS by `build_windows.bat` /
-`build_linux.sh` and the `.github/` CI matrix — the 526 MB Windows onefile builds and
-launches from a verified spec.
+`build_linux.sh` and the `.github/` CI matrix — the Windows onefile (638 MB with the
+studio's VTK stack) builds and launches from a verified spec. **The exe opens the
+studio by default; pass `--classic` for the original M6 GUI.**
 
 **Studio (M11 core + simulation):** a pyvista/pyvistaqt **3D build-plate GUI**
 (`studio/`) on top of the same pipeline — load **multiple meshes** onto the simulated
@@ -51,7 +52,8 @@ viewport with per-move-class toggles + a layer scrubber, and run a **kinematic
 simulation** (`studio/simulate.py`): time-parameterized playback with the moving
 head, live wheel-heading arrow (watch the C axis track the tangent), contact state,
 and RPM / traverse / revs-per-mm / E readouts, airborne dwells included. Launch with
-`python -m rotoforge_slicer.studio [mesh.stl ...]`.
+`python -m rotoforge_slicer.studio [mesh.stl ...]` — or just the frozen exe, which
+starts the studio by default.
 
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
 > `afrb_playground_gui(2).py` generator are not in the repo. The only existing

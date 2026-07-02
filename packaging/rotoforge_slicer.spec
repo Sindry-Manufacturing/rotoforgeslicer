@@ -16,7 +16,10 @@ ROOT = os.path.dirname(SPECPATH)            # SPECPATH = .../packaging ; ROOT = 
 datas, binaries, hiddenimports = [], [], []
 # collect_all grabs each heavy package whole — our lazy, in-function imports of these
 # are invisible to PyInstaller's static analysis, so we cannot rely on it tracing them.
-for pkg in ("trimesh", "shapely", "rtree", "matplotlib", "PySide6", "scipy", "networkx"):
+# pyvista/pyvistaqt/vtkmodules power the studio 3D viewport; VTK's DLLs are large
+# but must ship or the default (studio) entry point dies at first import.
+for pkg in ("trimesh", "shapely", "rtree", "matplotlib", "PySide6", "scipy",
+            "networkx", "pyvista", "pyvistaqt", "vtkmodules"):
     try:
         d, b, h = collect_all(pkg)
         datas += d

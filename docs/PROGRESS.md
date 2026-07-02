@@ -15,6 +15,12 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Packaging: the frozen exe now opens the studio.** `packaging/launch_gui.py`
+  defaults to `studio.app` (`--classic` reopens the M6 GUI); the spec collects
+  `pyvista`/`pyvistaqt`/`vtkmodules` so the 3D viewport ships. Rebuilt
+  `dist/RotoforgeSlicer.exe` (638 MB, was 551) verified by launch: default window
+  title "Rotoforge Studio", `--classic` → "Rotoforge Slicer". (The previous exe was
+  a stale Jun-30 M7 build — onefile artifacts never pick up new code.)
 - **Studio — 3D build-plate GUI + kinematic simulation (M11 core) — landed.** New
   `studio/` package on the existing validated core (no core rewrite — the invariants
   stay untouched): `scene.py` (pure placement math: pivot-centred transforms,

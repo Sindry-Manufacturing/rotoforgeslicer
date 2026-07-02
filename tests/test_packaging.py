@@ -8,12 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_launcher_entry_point_is_callable():
-    # the frozen exe runs packaging/launch_gui.py, which imports this symbol
-    from rotoforge_slicer.gui.app import main
+def test_launcher_entry_points_are_callable():
+    # the frozen exe runs packaging/launch_gui.py: studio by default, --classic
+    # falls back to the M6 GUI — both mains must stay importable
+    from rotoforge_slicer.gui.app import main as classic_main
+    from rotoforge_slicer.studio.app import main as studio_main
 
-    assert (ROOT / "packaging" / "launch_gui.py").exists()
-    assert callable(main)
+    launcher = (ROOT / "packaging" / "launch_gui.py").read_text()
+    assert "rotoforge_slicer.studio.app" in launcher     # default = studio
+    assert "--classic" in launcher                       # old GUI reachable
+    assert callable(classic_main) and callable(studio_main)
 
 
 def test_spec_is_coherent():
@@ -21,6 +25,8 @@ def test_spec_is_coherent():
     assert "launch_gui.py" in spec                       # entry point
     assert "collect_submodules" in spec                  # bundles our lazy imports
     assert "machine_duet3.yaml" in spec                  # the config data file
+    for pkg in ("pyvista", "pyvistaqt", "vtkmodules"):   # the studio 3D stack ships
+        assert pkg in spec, f"{pkg} missing from the spec collect list"
     assert (ROOT / "config" / "machine_duet3.yaml").exists()
     assert (ROOT / "packaging" / "build_windows.bat").exists()
     assert (ROOT / "packaging" / "build_linux.sh").exists()
