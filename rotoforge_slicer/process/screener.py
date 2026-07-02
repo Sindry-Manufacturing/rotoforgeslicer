@@ -110,21 +110,63 @@ def _widest_contiguous_run(ray_rows: list) -> list:
     return best
 
 
+def distinct_rays(rows, tol: float = 5.0) -> list[float]:
+    """The distinct revs/mm ray values present among STABLE cells, sorted.
+
+    Values within ``tol`` of each other cluster to one ray (represented by the
+    cluster mean), matching how ``select_operating_point`` groups cells. This is
+    what the graphical screener lists for the user to pick from."""
+    nvs = sorted(_nv(r) for r in stable_rows(rows))
+    rays: list[list[float]] = []
+    for nv in nvs:
+        if rays and nv - rays[-1][0] <= tol:
+            rays[-1].append(nv)
+        else:
+            rays.append([nv])
+    return [sum(c) / len(c) for c in rays]
+
+
+def ray_run(rows, nv: float, tol: float = 5.0) -> list[dict]:
+    """The widest CONTIGUOUS stable run on the revs/mm ray ``nv`` (traverse-sorted
+    cell rows; empty if the ray has no stable run). Public wrapper for the GUI —
+    these cells are the selectable operating window on that ray."""
+    ray = [r for r in rows if abs(_nv(r) - nv) <= tol]
+    return _widest_contiguous_run(ray)
+
+
+def widest_ray(rows, tol: float = 5.0) -> Optional[float]:
+    """The revs/mm ray with the widest contiguous stable run (what ``auto`` mode
+    selects) — the GUI's default highlight. None if no ray has a stable run."""
+    best_nv, best_span = None, -1.0
+    for nv in distinct_rays(rows, tol):
+        run = ray_run(rows, nv, tol)
+        if run:
+            span = _trav(run[-1]) - _trav(run[0])
+            if span > best_span:
+                best_nv, best_span = nv, span
+    return best_nv
+
+
 def select_operating_point(csv_path: str, mode: str = "auto",
                            target: float = 0.0, tol: float = 5.0,
                            rpm_min: Optional[int] = None,
-                           rpm_max: Optional[int] = None) -> OperatingPoint:
+                           rpm_max: Optional[int] = None,
+                           traverse_target: float = 0.0) -> OperatingPoint:
     """Pick the operating point. ``rpm_min``/``rpm_max`` (the SuperPID window, from
     config) are recorded on the result and reject a representative cell whose RPM is
-    out of range (SPEC §5.2 step 4 / §1.3)."""
+    out of range (SPEC §5.2 step 4 / §1.3).
+
+    ``traverse_target`` selects the representative cell on the winning ray: the
+    stable cell nearest that traverse (0 = the run midpoint, the historic default).
+    The choice always SNAPS to a measured cell — feed/torque/temperature come from
+    real screener data, never interpolated physics."""
     all_rows = load_rows(csv_path)
     stable = stable_rows(all_rows)
     if not stable:
         raise ValueError("no stable (pass) rows in screener CSV")
 
     if mode == "manual":
-        ray = [r for r in all_rows if abs(_nv(r) - target) <= tol]
-        sel = _widest_contiguous_run(ray)  # contiguous so the band has no unstable gap
+        sel = ray_run(all_rows, target, tol)  # contiguous: the band has no unstable gap
         if not sel:
             raise ValueError(f"no contiguous stable run within {tol} of revs/mm={target}")
         nv_star = target
@@ -132,8 +174,7 @@ def select_operating_point(csv_path: str, mode: str = "auto",
         best = None  # (span, nv_star, run)
         for r0 in stable:
             nv0 = _nv(r0)
-            ray = [r for r in all_rows if abs(_nv(r) - nv0) <= tol]
-            run = _widest_contiguous_run(ray)
+            run = ray_run(all_rows, nv0, tol)
             if not run:
                 continue
             span = _trav(run[-1]) - _trav(run[0])
@@ -145,8 +186,8 @@ def select_operating_point(csv_path: str, mode: str = "auto",
 
     v_min = min(_trav(r) for r in sel)
     v_max = max(_trav(r) for r in sel)
-    mid = 0.5 * (v_min + v_max)
-    rep = min(sel, key=lambda r: abs(_trav(r) - mid))
+    want = traverse_target if traverse_target > 0 else 0.5 * (v_min + v_max)
+    rep = min(sel, key=lambda r: abs(_trav(r) - want))
     rpm = int(round(float(rep["rpm"])))
     if rpm_min is not None and rpm < rpm_min or rpm_max is not None and rpm > rpm_max:
         raise ValueError(

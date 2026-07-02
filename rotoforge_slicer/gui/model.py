@@ -100,7 +100,8 @@ def preview_from_model(model, cfg: Config, screener_csv: Optional[str] = None,
         op = select_operating_point(
             screener_csv, mode=cfg.screener.revs_per_mm_mode,
             target=cfg.screener.revs_per_mm_target, tol=cfg.screener.revs_per_mm_tol,
-            rpm_min=cfg.spindle.rpm_min, rpm_max=cfg.spindle.rpm_max)
+            rpm_min=cfg.spindle.rpm_min, rpm_max=cfg.spindle.rpm_max,
+            traverse_target=cfg.screener.traverse_target)
 
     tick(0.55, "planning passes…")
     from ..toolpath.passplan import plan_toolpath
