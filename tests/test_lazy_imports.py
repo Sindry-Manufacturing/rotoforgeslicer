@@ -42,6 +42,7 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.fill.heading
     import rotoforge_slicer.fill.curvature
     import rotoforge_slicer.fill.streamline
+    import rotoforge_slicer.fill.contour
     import rotoforge_slicer.toolpath.passplan
     import rotoforge_slicer.toolpath.segments
     import rotoforge_slicer.toolpath.collision
@@ -51,6 +52,9 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.studio.simulate
     import rotoforge_slicer.studio.viewport
     import rotoforge_slicer.studio.app
+    import rotoforge_slicer.studio.materials
+    import rotoforge_slicer.studio.screener_plot
+    import rotoforge_slicer.studio.screener_panel
 
     # Pure-python helpers must work with all heavy deps blocked.
     assert rotoforge_slicer.geometry.layer_heights(0.0, 1.0, 0.5) == [0.25, 0.75]

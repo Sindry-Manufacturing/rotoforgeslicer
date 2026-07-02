@@ -115,6 +115,9 @@ def test_studio_window_constructs_offscreen():
         "assert w.tabs.count() == 2\n"
         "assert len(w.toggles) == 5\n"
         "assert w.part_list.count() == 0 and not w.btn_play.isEnabled()\n"
+        "assert w.f_mode.count() == 4\n"          # raster/streamline/contour/outline
+        "assert len(w.adv_widgets) >= 12\n"       # advanced parameters exposed
+        "assert w.f_loops is not None and w.dims_lbl is not None\n"
         "w.close()\n"
         "print('STUDIO_OK')\n"
     )

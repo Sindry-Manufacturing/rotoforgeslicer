@@ -43,6 +43,43 @@ def _translate(dx: float, dy: float, dz: float) -> np.ndarray:
     return m
 
 
+def euler_zyx_deg_from_matrix(r: np.ndarray) -> Tuple[float, float, float]:
+    """(rot_x, rot_y, rot_z) in degrees such that Rz@Ry@Rx == ``r`` — the inverse of
+    this module's rotation composition, so an arbitrary rotation (lay-flat, a
+    world-frame 90° turn) can be written back into a part's transform fields."""
+    r20 = min(1.0, max(-1.0, float(r[2, 0])))
+    ry = math.asin(-r20)
+    if abs(math.cos(ry)) > 1e-9:
+        rx = math.atan2(r[2, 1], r[2, 2])
+        rz = math.atan2(r[1, 0], r[0, 0])
+    else:                                   # gimbal: ry = ±90°, fold everything into rx
+        rz = 0.0
+        sign = 1.0 if r20 < 0 else -1.0     # r20 = -sin(ry)
+        rx = math.atan2(sign * r[0, 1], r[1, 1])
+    return math.degrees(rx), math.degrees(ry), math.degrees(rz)
+
+
+def _align_rotation(from_vec, to_vec) -> np.ndarray:
+    """3×3 rotation taking unit vector ``from_vec`` onto ``to_vec`` (Rodrigues)."""
+    a = np.asarray(from_vec, dtype=float)
+    b = np.asarray(to_vec, dtype=float)
+    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    s = float(np.linalg.norm(v))
+    c = float(np.dot(a, b))
+    if s < 1e-12:
+        if c > 0:
+            return np.eye(3)
+        # antiparallel: 180° about any axis perpendicular to a
+        axis = np.cross(a, (1.0, 0.0, 0.0))
+        if np.linalg.norm(axis) < 1e-9:
+            axis = np.cross(a, (0.0, 1.0, 0.0))
+        axis = axis / np.linalg.norm(axis)
+        return 2.0 * np.outer(axis, axis) - np.eye(3)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * ((1.0 - c) / (s * s))
+
+
 @dataclass
 class ScenePart:
     """One mesh on the build plate with its placement transform.
@@ -95,6 +132,54 @@ class ScenePart:
                 raise AttributeError(f"unknown transform field {k!r}")
             setattr(self, k, float(v))
         self.refresh_drop()
+
+    def rotation(self) -> np.ndarray:
+        """The 3×3 rotation of the current transform (Rz@Ry@Rx, scale-free)."""
+        r = (_rot("z", self.rot_z_deg) @ _rot("y", self.rot_y_deg)
+             @ _rot("x", self.rot_x_deg))
+        return r[:3, :3]
+
+    def _apply_rotation(self, r3: np.ndarray) -> None:
+        """Compose a world-frame rotation onto the part and re-drop."""
+        rx, ry, rz = euler_zyx_deg_from_matrix(r3 @ self.rotation())
+        self.set_transform(rot_x_deg=rx, rot_y_deg=ry, rot_z_deg=rz)
+
+    def rotate_world(self, axis: str, deg: float) -> None:
+        """Rotate the part about a WORLD axis (what the quick-rotate buttons mean:
+        turning an already-tumbled part 90° about world Z must not re-tumble it,
+        which naively incrementing the intrinsic euler fields would do)."""
+        self._apply_rotation(_rot(axis, deg)[:3, :3])
+
+    def lay_flat(self) -> None:
+        """Rotate the part so its largest flat face rests on the bed.
+
+        Convex-hull facets of the CURRENT orientation are clustered by outward
+        normal; the cluster with the greatest total area is rotated to face −Z
+        (then the part re-drops). The standard 'lay flat' of desktop slicers —
+        deterministic, and safe for any watertight-ish mesh (hull only).
+        """
+        from scipy.spatial import ConvexHull
+
+        v = self.transformed_vertices()
+        hull = ConvexHull(v)
+        # cluster facets by (rounded) outward normal, but align to the exact
+        # AREA-WEIGHTED mean normal — aligning to the rounded key itself would tilt
+        # the face by up to the rounding step.
+        clusters: dict = {}
+        for simplex, eq in zip(hull.simplices, hull.equations):
+            a, b, c = v[simplex[0]], v[simplex[1]], v[simplex[2]]
+            area = 0.5 * float(np.linalg.norm(np.cross(b - a, c - a)))
+            key = tuple(round(float(x), 3) for x in eq[:3])
+            acc = clusters.setdefault(key, [0.0, np.zeros(3)])
+            acc[0] += area
+            acc[1] += area * eq[:3]
+        best_area, mean_n = max(clusters.values(), key=lambda kv: kv[0])
+        self._apply_rotation(_align_rotation(mean_n, (0.0, 0.0, -1.0)))
+
+    def size_mm(self) -> Tuple[float, float, float]:
+        """Placed bounding-box dimensions (for the GUI's dimensions readout)."""
+        lo, hi = self.bounds()
+        return tuple(float(d) for d in (hi - lo))
 
     # ---- queries -------------------------------------------------------------
 

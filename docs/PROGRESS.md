@@ -15,6 +15,35 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **M17 — contour / perimeter tracing — landed (core).** New `fill/contour.py`:
+  concentric wall centrelines via shapely erosion (bead/2 first, pitch steps; hole
+  walls come free), simplified rings, and the D13 **rotational-extreme start** —
+  each closed ring is scanned for a start whose A-band seats at ONE winding, so a
+  full loop deposits as a **single pass** on a ≥360° range (verified: a disc slices
+  to 13/13 closed one-pass rings). Sub-360° ranges reject clearly (headings
+  unreachable at any winding — unwinds can't create reachable headings); non-convex
+  rings sweeping past the range width split into arcs + airborne unwinds. Modes:
+  `fill.mode: contour | outline`, plus `fill.perimeter_loops: N` walls around
+  raster/streamline infill (infill inset past the walls, walls deposited last).
+  Same constraint pipeline as streamlines (slew split → winding split → min-len).
+- **Graphical process window + material profiles + parameter exposure.** The studio
+  gains a "Process window / material…" dialog: the screener map drawn on the RPM ×
+  traverse plane (stable/unstable cells, constant-revs/mm rays, the selected ray's
+  contiguous stable run, the chosen cell), ray picking, a cell slider + RPM target
+  that **snap to measured cells** (never interpolated physics), bed / hotshoe
+  temperature targets (`Hotshoe_{T}C.g` macro naming), and named per-material
+  profiles (`config/materials.yaml` via `studio/materials.py`).
+  `select_operating_point` gains `traverse_target` (nearest-cell snap;
+  `screener.traverse_target` in config); new public `distinct_rays` / `ray_run` /
+  `widest_ray`. The studio also exposes ~16 **advanced parameters** (lead-in/out,
+  clearances, feeds, slew, collision, streamline/contour knobs, dry-run) in a
+  collapsible group.
+- **Studio QoL (M11).** Direct **drag-to-move** (press a part grabs it — camera
+  orbit suppressed via VTK observer abort; empty-plate drags still orbit),
+  **lay flat** (largest convex-hull face down, area-weighted normals),
+  **world-frame X/Y/Z +90° turns** (euler decomposition keeps the transform fields
+  canonical), reset transform, live part-dimensions readout, and Top/Front/Right/
+  Iso/Fit camera presets. 182 tests green.
 - **Packaging: the frozen exe now opens the studio.** `packaging/launch_gui.py`
   defaults to `studio.app` (`--classic` reopens the M6 GUI); the spec collects
   `pyvista`/`pyvistaqt`/`vtkmodules` so the 3D viewport ships. Rebuilt
@@ -73,7 +102,7 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
   multi-part placement, drop-to-bed, click-move). Still open: in-viewport **drag/rotate
   gizmos** and the live **reorientation-break / unwind + curvature-feasibility heatmap**
   (the wedge-coverage metric is gone — D13).
-- **M17 (new) — contour / perimeter tracing fill:** concentric offsets, each ring clipped
-  to **winding-range arcs** (`perimeter` / `contour` / `outline`). Includes the
-  *closed-loop-in-one-pass* refinement — start a ring at a rotational extreme so its ~360°
-  sweep aligns with the range (the current `split_on_winding` is start-agnostic).
+- **M17 remainder:** the contour core landed (see Recent changes) including the
+  closed-loop-in-one-pass refinement. Still open: seam scattering (every ring starts
+  near the same rotational extreme, so lead-outs cluster in one sector) and
+  contour-direction interaction with the collision approach rule under tall builds.

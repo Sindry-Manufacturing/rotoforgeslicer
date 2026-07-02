@@ -55,6 +55,18 @@ and RPM / traverse / revs-per-mm / E readouts, airborne dwells included. Launch 
 `python -m rotoforge_slicer.studio [mesh.stl ...]` — or just the frozen exe, which
 starts the studio by default.
 
+**M17 contour tracing + graphical process window + QoL:** `fill/contour.py` traces
+concentric perimeter walls (modes `contour` / `outline`, or `perimeter_loops` walls
+around raster/streamline infill) with the D13 rotational-extreme start — a full
+closed ring deposits as ONE pass when the C-axis range can wind it, splits into
+arcs + airborne unwinds when non-convex sweeps exceed the range, and rejects
+clearly when headings are unreachable. The studio adds direct **drag-to-move**,
+**lay flat**, world-frame 90° turns, camera presets, a collapsible **advanced
+parameter** panel, and a **"Process window / material…" dialog**: the screener map
+(stable cells, revs/mm rays, the contiguous stable window), cell-snapped traverse /
+RPM targets, bed + hotshoe temperatures, and named per-material profiles
+(`config/materials.yaml`).
+
 > **M2 parity note:** the SPEC's `afrb_yline_*` reference G-code and
 > `afrb_playground_gui(2).py` generator are not in the repo. The only existing
 > reference output is from an older prototype whose closed perimeters are now

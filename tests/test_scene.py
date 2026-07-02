@@ -97,6 +97,52 @@ def test_set_transform_rejects_unknown_field():
         part.set_transform(bogus=1.0)
 
 
+def test_rotate_world_is_world_frame():
+    # after tumbling 90° about X, a WORLD-Z turn must spin the footprint, not re-tumble
+    scene = SceneModel()
+    part = scene.add(_Stub(10, 20, 30), at=(100, 100))
+    part.set_transform(rot_x_deg=90.0)          # height becomes 20 (y-extent up)
+    part.rotate_world("z", 90.0)
+    lo, hi = part.bounds()
+    assert hi[2] - lo[2] == pytest.approx(20.0)  # height unchanged by a world-Z turn
+    x0, y0, x1, y1 = part.footprint()
+    assert x1 - x0 == pytest.approx(30.0)        # footprint axes swapped by the spin
+    assert y1 - y0 == pytest.approx(10.0)
+    assert lo[2] == pytest.approx(0.0)           # still on the bed
+
+
+def test_euler_roundtrip():
+    import numpy as np
+
+    from rotoforge_slicer.studio.scene import euler_zyx_deg_from_matrix
+
+    part = ScenePart("p", _Stub(5, 5, 5))
+    for angles in [(30, 40, 50), (0, 0, 0), (-120, 15, 179), (10, 90, 0)]:
+        part.set_transform(rot_x_deg=angles[0], rot_y_deg=angles[1],
+                           rot_z_deg=angles[2])
+        r = part.rotation()
+        rx, ry, rz = euler_zyx_deg_from_matrix(r)
+        part.set_transform(rot_x_deg=rx, rot_y_deg=ry, rot_z_deg=rz)
+        assert np.allclose(part.rotation(), r, atol=1e-9)   # same rotation recovered
+
+
+def test_lay_flat_puts_largest_face_down():
+    pytest.importorskip("scipy")
+    scene = SceneModel()
+    part = scene.add(_Stub(10, 20, 30), at=(100, 100))      # largest face 20x30 (±X)
+    part.set_transform(rot_x_deg=33.0, rot_y_deg=21.0, rot_z_deg=57.0)  # tumble it
+    part.lay_flat()
+    lo, hi = part.bounds()
+    assert hi[2] - lo[2] == pytest.approx(10.0, abs=1e-6)   # thinnest axis is vertical
+    assert lo[2] == pytest.approx(0.0)                      # resting on the bed
+    # lay-flat only levels the face; the tumble's yaw persists, so the FOOTPRINT is
+    # the 20x30 face at an arbitrary Z rotation — its AABB stays within the diagonal.
+    sx, sy, sz = part.size_mm()
+    diag = (20.0**2 + 30.0**2) ** 0.5
+    assert 20.0 - 1e-6 <= max(sx, sy) <= diag + 1e-6
+    assert sx * sy >= 600.0 - 1e-6                          # covers at least the face
+
+
 def test_snapshot_is_independent_of_the_live_scene():
     # review fix: the slice worker gets a snapshot, so live edits cannot race it.
     scene = SceneModel()

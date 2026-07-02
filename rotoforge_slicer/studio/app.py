@@ -23,6 +23,42 @@ from .simulate import build_timeline, state_at, total_duration_s
 SPEEDS = (("0.25x", 0.25), ("1x", 1.0), ("4x", 4.0), ("16x", 16.0), ("64x", 64.0))
 _TICK_MS = 33
 
+# Advanced process parameters (label, cfg path, lo, hi, step, decimals) — exposed in
+# the collapsible Advanced group and written back on Slice. Values are config-driven
+# per CLAUDE.md; this is the GUI onto them, not a second source of truth.
+ADVANCED_FIELDS = (
+    ("Lead-in (mm)", "process.lead_in_len_mm", 0.5, 20.0, 0.5, 1),
+    ("Lead-out (mm)", "process.lead_out_len_mm", 0.5, 30.0, 0.5, 1),
+    ("Approach clearance (mm)", "process.approach_clearance_mm", 0.1, 5.0, 0.1, 2),
+    ("Inter-pass lift (mm)", "process.inter_pass_lift_mm", 1.0, 50.0, 1.0, 1),
+    ("Wire diameter (mm)", "process.wire_diameter_mm", 0.1, 2.0, 0.05, 2),
+    ("Travel feed (mm/min)", "emit.feed_travel_mm_min", 100.0, 10000.0, 50.0, 0),
+    ("Z feed (mm/min)", "emit.feed_z_mm_min", 50.0, 2000.0, 10.0, 0),
+    ("Deposition feed fallback (mm/min)", "emit.feed_dep_mm_min", 10.0, 2000.0, 10.0, 0),
+    ("C-axis slew ω_C (deg/s)", "c_axis.max_speed_deg_s", 0.0, 2000.0, 10.0, 0),
+    ("Collision clearance (mm)", "collision.clearance_mm", 0.0, 5.0, 0.1, 2),
+    ("Collision wire lead (mm)", "collision.wire_lead_mm", 0.0, 10.0, 0.5, 1),
+    ("Crosshatch angle (deg)", "fill.crosshatch_angle_deg", 0.0, 90.0, 5.0, 1),
+    ("Streamline step (mm)", "fill.streamline_step_mm", 0.1, 5.0, 0.1, 2),
+    ("Streamline curl", "fill.streamline_curl", 0.0, 2.0, 0.1, 2),
+    ("Contour simplify (mm)", "fill.contour_simplify_mm", 0.0, 1.0, 0.01, 2),
+)
+
+
+def _cfg_get(cfg, path: str):
+    obj = cfg
+    for part in path.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _cfg_set(cfg, path: str, value) -> None:
+    parts = path.split(".")
+    obj = cfg
+    for part in parts[:-1]:
+        obj = getattr(obj, part)
+    setattr(obj, parts[-1], value)
+
 
 def _build_studio_window():
     """Construct (without showing) the studio window. Split out so a headless smoke
@@ -125,7 +161,8 @@ def _build_studio_window():
             lyt.addWidget(pbox)
 
             tbox = QtWidgets.QGroupBox("Transform (selected part)")
-            tf = QtWidgets.QFormLayout(tbox)
+            tv = QtWidgets.QVBoxLayout(tbox)
+            tf = QtWidgets.QFormLayout()
             bx, by, _ = self.cfg.machine.build_volume_mm
             self.t_x = self._dspin(0, 0, bx, 1.0, 1)
             self.t_y = self._dspin(0, 0, by, 1.0, 1)
@@ -139,6 +176,20 @@ def _build_studio_window():
                 tf.addRow(lbl, w)
             for w in (self.t_x, self.t_y, self.t_rx, self.t_ry, self.t_rz, self.t_s):
                 w.valueChanged.connect(self._on_transform_edit)
+            tv.addLayout(tf)
+            # quick reorientation: world-frame 90° turns, lay-flat, reset (M11 QoL)
+            qrow = QtWidgets.QHBoxLayout()
+            for text, slot in (("X+90", lambda: self._rotate_world("x")),
+                               ("Y+90", lambda: self._rotate_world("y")),
+                               ("Z+90", lambda: self._rotate_world("z")),
+                               ("Lay flat", self._lay_flat),
+                               ("Reset", self._reset_transform)):
+                b = QtWidgets.QPushButton(text)
+                b.clicked.connect(slot)
+                qrow.addWidget(b)
+            tv.addLayout(qrow)
+            self.dims_lbl = QtWidgets.QLabel("—")
+            tv.addWidget(self.dims_lbl)
             lyt.addWidget(tbox)
 
             form = QtWidgets.QFormLayout()
@@ -150,8 +201,11 @@ def _build_studio_window():
             self.f_amin = self._dspin(self.cfg.c_axis.a_min_deg, -360.0, 0.0, 5.0, 0)
             self.f_amax = self._dspin(self.cfg.c_axis.a_max_deg, 0.0, 360.0, 5.0, 0)
             self.f_mode = QtWidgets.QComboBox()
-            self.f_mode.addItems(["raster", "streamline"])
+            self.f_mode.addItems(["raster", "streamline", "contour", "outline"])
             self.f_mode.setCurrentText(self.cfg.fill.mode)
+            self.f_loops = QtWidgets.QSpinBox()
+            self.f_loops.setRange(0, 20)
+            self.f_loops.setValue(self.cfg.fill.perimeter_loops)
             self.f_cross = QtWidgets.QCheckBox("crosshatch (alternate heading per layer)")
             self.f_cross.setChecked(self.cfg.fill.crosshatch)
             form.addRow("Layer height (mm)", self.f_lh)
@@ -161,11 +215,36 @@ def _build_studio_window():
             form.addRow("C-axis A min (deg)", self.f_amin)
             form.addRow("C-axis A max (deg)", self.f_amax)
             form.addRow("Fill mode", self.f_mode)
+            form.addRow("Perimeter loops (M17)", self.f_loops)
             form.addRow(self.f_cross)
             box = QtWidgets.QGroupBox("Process")
             box.setLayout(form)
             lyt.addWidget(box)
 
+            # collapsible advanced parameters (table-driven; applied on Slice)
+            self.adv_box = QtWidgets.QGroupBox("Advanced parameters")
+            self.adv_box.setCheckable(True)
+            self.adv_box.setChecked(False)
+            adv_lyt = QtWidgets.QVBoxLayout(self.adv_box)
+            adv_inner = QtWidgets.QWidget()
+            adv_form = QtWidgets.QFormLayout(adv_inner)
+            adv_form.setContentsMargins(0, 0, 0, 0)
+            self.adv_widgets = {}
+            for label, path, lo, hi, step, dec in ADVANCED_FIELDS:
+                w = self._dspin(float(_cfg_get(self.cfg, path)), lo, hi, step, dec)
+                self.adv_widgets[path] = w
+                adv_form.addRow(label, w)
+            self.adv_dry = QtWidgets.QCheckBox("dry run (no spindle/heat/E)")
+            self.adv_dry.setChecked(self.cfg.emit.dry_run)
+            adv_form.addRow(self.adv_dry)
+            adv_lyt.addWidget(adv_inner)
+            adv_inner.setVisible(False)
+            self.adv_box.toggled.connect(adv_inner.setVisible)
+            lyt.addWidget(self.adv_box)
+
+            btn_screener = QtWidgets.QPushButton("Process window / material…")
+            btn_screener.clicked.connect(self._open_screener)
+            lyt.addWidget(btn_screener)
             btn_csv = QtWidgets.QPushButton("Open process-window CSV…")
             btn_csv.clicked.connect(self._open_csv)
             self.csv_lbl = QtWidgets.QLabel("no CSV (single-speed fallback)")
@@ -182,12 +261,28 @@ def _build_studio_window():
                       self.issues_lbl):
                 lyt.addWidget(w)
             lyt.addStretch(1)
-            left.setMaximumWidth(360)
-            split.addWidget(left)
+            scroll = QtWidgets.QScrollArea()
+            scroll.setWidget(left)
+            scroll.setWidgetResizable(True)
+            scroll.setMaximumWidth(390)
+            scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            split.addWidget(scroll)
 
             # ---- right: 3D viewport + mode tabs + log ----
             right = QtWidgets.QWidget()
             rlyt = QtWidgets.QVBoxLayout(right)
+            vrow = QtWidgets.QHBoxLayout()          # camera presets (M11 QoL)
+            for text, slot in (("Top", lambda: self._view_preset("xy")),
+                               ("Front", lambda: self._view_preset("xz")),
+                               ("Right", lambda: self._view_preset("yz")),
+                               ("Iso", lambda: self._view_preset("iso")),
+                               ("Fit", lambda: self._view_preset(None))):
+                b = QtWidgets.QPushButton(text)
+                b.setMaximumWidth(52)
+                b.clicked.connect(slot)
+                vrow.addWidget(b)
+            vrow.addStretch(1)
+            rlyt.addLayout(vrow)
             self.interactor = QtInteractor(right)
             self.view = BuildPlateScene(plotter=self.interactor)
             self.view.draw_plate(self.cfg)
@@ -195,6 +290,10 @@ def _build_studio_window():
             # which must not select or teleport parts.
             self.interactor.track_click_position(self._on_view_click, side="left",
                                                  double=True)
+            # direct drag-to-move (press a part, drag it, release); orbit still owns
+            # drags that start on empty plate
+            self._drag = None
+            self._install_drag_handlers()
             rlyt.addWidget(self.interactor, stretch=1)
 
             self.tabs = QtWidgets.QTabWidget()
@@ -203,10 +302,10 @@ def _build_studio_window():
             prep = QtWidgets.QWidget()
             pl2 = QtWidgets.QVBoxLayout(prep)
             hint = QtWidgets.QLabel(
-                "Double-click a part to select it; double-click the plate to move the "
-                "selected part there (drag orbits the camera). Parts always rest on "
-                "the bed; rotations tumble about the part centre. Fit and overlap "
-                "problems appear on the left.")
+                "Drag a part to move it (drags starting on empty plate orbit the "
+                "camera); double-click also selects / moves. X/Y/Z+90 rotate about "
+                "world axes; Lay flat drops the largest face to the bed. Parts "
+                "always rest on the bed; fit and overlap problems appear on the left.")
             hint.setWordWrap(True)
             pl2.addWidget(hint)
             pl2.addStretch(1)
@@ -342,6 +441,105 @@ def _build_studio_window():
                 self._load_transform_form()
                 self._sync_scene()
 
+        # ---- QoL: reorientation, view presets, drag-to-move (M11) ------------
+
+        def _rotate_world(self, axis):
+            if self.selected:
+                self.selected.rotate_world(axis, 90.0)
+                self._load_transform_form()
+                self._sync_scene()
+
+        def _lay_flat(self):
+            if self.selected:
+                try:
+                    self.selected.lay_flat()
+                except Exception as e:
+                    self._log(f"lay flat failed: {e}")
+                self._load_transform_form()
+                self._sync_scene()
+
+        def _reset_transform(self):
+            if self.selected:
+                self.selected.set_transform(rot_x_deg=0, rot_y_deg=0, rot_z_deg=0,
+                                            scale=1.0)
+                self._load_transform_form()
+                self._sync_scene()
+
+        def _view_preset(self, name):
+            if name:
+                self.interactor.camera_position = name
+            self.view.reset_camera()
+            self.interactor.update()
+
+        def _install_drag_handlers(self):
+            """Direct manipulation: press ON a part grabs it (camera suppressed via
+            the observer abort flag), dragging slides it on the plate (cheap actor
+            offset), release commits the transform. A press on empty plate falls
+            through to the normal camera orbit. Best-effort — if the VTK plumbing
+            differs, the double-click flow still covers select/move."""
+            try:
+                iren = self.interactor.iren.interactor   # raw vtkRenderWindowInteractor
+                iren.AddObserver("LeftButtonPressEvent", self._vtk_press, 10.0)
+                iren.AddObserver("MouseMoveEvent", self._vtk_move, 10.0)
+                iren.AddObserver("LeftButtonReleaseEvent", self._vtk_release, 10.0)
+            except Exception as e:                        # pragma: no cover
+                self._log(f"drag-to-move unavailable ({e}); double-click still works")
+
+        def _pick_plate_xy(self):
+            """World XY under the cursor, or None when the pick leaves the volume
+            (the world-point picker never returns None — sky hits land on the far
+            clipping plane, which this guard rejects)."""
+            try:
+                p = self.interactor.pick_mouse_position()
+            except Exception:
+                return None
+            bx, by, bz = self.cfg.machine.build_volume_mm
+            x, y, z = float(p[0]), float(p[1]), float(p[2])
+            if 0 <= x <= bx and 0 <= y <= by and -1.0 <= z <= bz:
+                return x, y
+            return None
+
+        def _vtk_press(self, obj, event):
+            if self.tabs.currentIndex() != 0:
+                return
+            pick = self._pick_plate_xy()
+            if pick is None:
+                return                                    # let the camera have it
+            for part in self.scene.parts:
+                x0, y0, x1, y1 = part.footprint()
+                if x0 <= pick[0] <= x1 and y0 <= pick[1] <= y1:
+                    self.selected = part
+                    self._refresh_part_list()
+                    self._load_transform_form()
+                    self._sync_scene()
+                    self._drag = {"part": part, "ox": part.x - pick[0],
+                                  "oy": part.y - pick[1], "x0": part.x, "y0": part.y,
+                                  "tx": part.x, "ty": part.y}
+                    obj.SetAbortFlag(1)                   # camera must not orbit
+                    return
+
+        def _vtk_move(self, obj, event):
+            if not self._drag:
+                return
+            pick = self._pick_plate_xy()
+            if pick is not None:
+                d = self._drag
+                d["tx"], d["ty"] = pick[0] + d["ox"], pick[1] + d["oy"]
+                actor = self.view._part_actors.get(id(d["part"]))
+                if actor is not None:                     # cheap live preview
+                    actor.SetPosition(d["tx"] - d["x0"], d["ty"] - d["y0"], 0.0)
+                    self.interactor.update()
+            obj.SetAbortFlag(1)
+
+        def _vtk_release(self, obj, event):
+            if not self._drag:
+                return
+            d, self._drag = self._drag, None
+            d["part"].set_transform(x=d["tx"], y=d["ty"])  # commit + re-drop
+            self._load_transform_form()
+            self._sync_scene()
+            obj.SetAbortFlag(1)
+
         def _load_transform_form(self):
             p = self.selected
             for w, val in ((self.t_x, p.x if p else 0), (self.t_y, p.y if p else 0),
@@ -352,6 +550,11 @@ def _build_studio_window():
                 w.blockSignals(True)
                 w.setValue(val)
                 w.blockSignals(False)
+            if p:
+                sx, sy, sz = p.size_mm()
+                self.dims_lbl.setText(f"{p.name}: {sx:.1f} × {sy:.1f} × {sz:.1f} mm")
+            else:
+                self.dims_lbl.setText("—")
 
         def _on_transform_edit(self, *_):
             if not self.selected:
@@ -404,7 +607,18 @@ def _build_studio_window():
             self.cfg.c_axis.a_min_deg = self.f_amin.value()
             self.cfg.c_axis.a_max_deg = self.f_amax.value()
             self.cfg.fill.mode = self.f_mode.currentText()
+            self.cfg.fill.perimeter_loops = self.f_loops.value()
             self.cfg.fill.crosshatch = self.f_cross.isChecked()
+            for path, w in self.adv_widgets.items():
+                value = w.value()
+                _cfg_set(self.cfg, path, int(value) if w.decimals() == 0
+                         and isinstance(_cfg_get(self.cfg, path), int) else value)
+            self.cfg.emit.dry_run = self.adv_dry.isChecked()
+
+        def _open_screener(self):
+            from .screener_panel import open_screener_dialog
+
+            open_screener_dialog(self)
 
         def _slice(self):
             if not self.scene.parts:
