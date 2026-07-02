@@ -15,6 +15,25 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Adversarial review of M17/screener/QoL — 13 defect classes fixed.** The big ones:
+  **(1) corner scrubbing (hardware-critical):** sharp polygon corners slipped past the
+  circumradius proxy while the firmware interpolates the A step across the whole next
+  in-contact segment — new per-vertex rule `c_axis.max_heading_step_deg` (15°): the
+  planner splits corners into airborne reorients (`split_on_heading_step`) and the
+  emitter **proves** it; **(2) sub-360° ranges:** closed rings no longer abort — arcs
+  with unreachable headings deposit in **reverse** (`split_unreachable`; D13, no
+  privileged direction), so contour works on a truthfully calibrated machine (<180°
+  ranges still fail loud); **(3) hotshoe was dead config:** the preamble now emits
+  `process.hotshoe_macro`; **(4) drag-to-move actually works now:** fresh z-buffer
+  world picks at the live event position + camera style disabled during grabs
+  (pyvista's cached point-picker path returned stale/vertex-snapped points and the
+  VTK abort call was a no-op); **(5) WYSIWYG screener:** Apply pins the displayed ray
+  (auto-highlight could diverge from the pipeline's auto pick), all dialog state is
+  local until Apply, profiles with missing CSVs load temps only, `traverse_target`
+  outside the stable run fails loud; also: infill inset by walls that actually FIT
+  (thin-rib voids), wall↔hatch spacing = one pitch, cfg deep-copied to the slice
+  worker, planner/emitter A-tolerance unified, O(N) ring-seat scan, area-weighted
+  lay-flat normals, changed-field-only transform writes. 190 tests green.
 - **M17 — contour / perimeter tracing — landed (core).** New `fill/contour.py`:
   concentric wall centrelines via shapely erosion (bead/2 first, pitch steps; hole
   walls come free), simplified rings, and the D13 **rotational-extreme start** —

@@ -472,11 +472,16 @@ def _build_studio_window():
             self.interactor.update()
 
         def _install_drag_handlers(self):
-            """Direct manipulation: press ON a part grabs it (camera suppressed via
-            the observer abort flag), dragging slides it on the plate (cheap actor
-            offset), release commits the transform. A press on empty plate falls
-            through to the normal camera orbit. Best-effort — if the VTK plumbing
-            differs, the double-click flow still covers select/move."""
+            """Direct manipulation: press ON a part grabs it, dragging slides it on
+            the plate (cheap actor offset), release commits the transform. While a
+            part is grabbed the camera style is DISABLED (vtkInteractorObserver
+            EnabledOff — our observers run at priority 10, before the style at 0, so
+            the style never sees the grabbing press); a press on empty plate leaves
+            the style alone and orbits normally. Picking is a fresh z-buffer
+            vtkWorldPointPicker at the CURRENT event position on every event —
+            pyvista's cached ``pick_mouse_position``/point-picker path returns stale
+            or vertex-snapped points and must not be used here. Best-effort: any
+            plumbing failure leaves the double-click select/move flow working."""
             try:
                 iren = self.interactor.iren.interactor   # raw vtkRenderWindowInteractor
                 iren.AddObserver("LeftButtonPressEvent", self._vtk_press, 10.0)
@@ -485,24 +490,36 @@ def _build_studio_window():
             except Exception as e:                        # pragma: no cover
                 self._log(f"drag-to-move unavailable ({e}); double-click still works")
 
-        def _pick_plate_xy(self):
-            """World XY under the cursor, or None when the pick leaves the volume
-            (the world-point picker never returns None — sky hits land on the far
-            clipping plane, which this guard rejects)."""
+        def _world_pick_xy(self, iren):
+            """World XY at the interactor's CURRENT event position via a fresh
+            z-buffer world-point pick; None when the pick leaves the build volume
+            (sky hits land on the far clipping plane, which the guard rejects)."""
             try:
-                p = self.interactor.pick_mouse_position()
+                import vtk
+
+                x, y = iren.GetEventPosition()
+                picker = vtk.vtkWorldPointPicker()
+                picker.Pick(x, y, 0, self.interactor.renderer)
+                p = picker.GetPickPosition()
             except Exception:
                 return None
             bx, by, bz = self.cfg.machine.build_volume_mm
-            x, y, z = float(p[0]), float(p[1]), float(p[2])
-            if 0 <= x <= bx and 0 <= y <= by and -1.0 <= z <= bz:
-                return x, y
+            px, py, pz = float(p[0]), float(p[1]), float(p[2])
+            if 0 <= px <= bx and 0 <= py <= by and -1.0 <= pz <= bz:
+                return px, py
             return None
+
+        def _camera_style_enabled(self, enabled: bool):
+            try:
+                style = self.interactor.iren.interactor.GetInteractorStyle()
+                (style.EnabledOn if enabled else style.EnabledOff)()
+            except Exception:                             # pragma: no cover
+                pass
 
         def _vtk_press(self, obj, event):
             if self.tabs.currentIndex() != 0:
                 return
-            pick = self._pick_plate_xy()
+            pick = self._world_pick_xy(obj)
             if pick is None:
                 return                                    # let the camera have it
             for part in self.scene.parts:
@@ -515,13 +532,13 @@ def _build_studio_window():
                     self._drag = {"part": part, "ox": part.x - pick[0],
                                   "oy": part.y - pick[1], "x0": part.x, "y0": part.y,
                                   "tx": part.x, "ty": part.y}
-                    obj.SetAbortFlag(1)                   # camera must not orbit
+                    self._camera_style_enabled(False)     # camera must not orbit
                     return
 
         def _vtk_move(self, obj, event):
             if not self._drag:
                 return
-            pick = self._pick_plate_xy()
+            pick = self._world_pick_xy(obj)
             if pick is not None:
                 d = self._drag
                 d["tx"], d["ty"] = pick[0] + d["ox"], pick[1] + d["oy"]
@@ -529,16 +546,15 @@ def _build_studio_window():
                 if actor is not None:                     # cheap live preview
                     actor.SetPosition(d["tx"] - d["x0"], d["ty"] - d["y0"], 0.0)
                     self.interactor.update()
-            obj.SetAbortFlag(1)
 
         def _vtk_release(self, obj, event):
             if not self._drag:
                 return
             d, self._drag = self._drag, None
+            self._camera_style_enabled(True)
             d["part"].set_transform(x=d["tx"], y=d["ty"])  # commit + re-drop
             self._load_transform_form()
             self._sync_scene()
-            obj.SetAbortFlag(1)
 
         def _load_transform_form(self):
             p = self.selected
@@ -559,23 +575,30 @@ def _build_studio_window():
         def _on_transform_edit(self, *_):
             if not self.selected:
                 return
-            self.selected.set_transform(
-                x=self.t_x.value(), y=self.t_y.value(),
-                rot_x_deg=self.t_rx.value(), rot_y_deg=self.t_ry.value(),
-                rot_z_deg=self.t_rz.value(), scale=self.t_s.value())
-            self._sync_scene()
+            # write back ONLY fields the user actually changed: the 0.1-precision
+            # spinboxes would otherwise quantize a precise lay-flat / world-turn
+            # orientation the first time any unrelated field is nudged.
+            p = self.selected
+            fields = {"x": self.t_x, "y": self.t_y, "rot_x_deg": self.t_rx,
+                      "rot_y_deg": self.t_ry, "rot_z_deg": self.t_rz,
+                      "scale": self.t_s}
+            changed = {k: w.value() for k, w in fields.items()
+                       if abs(w.value() - getattr(p, k)) > 0.5 * 10 ** -w.decimals()}
+            if changed:
+                p.set_transform(**changed)
+                self._sync_scene()
 
         def _on_view_click(self, point):
             """Double-click a part -> select it; double-click the plate -> move the
-            selection there. The world-point picker never returns None — a click on
-            empty sky lands on the far clipping plane — so accept only points inside
-            the build volume (with a little slack below the bed for plate hits)."""
-            if point is None or self.tabs.currentIndex() != 0:
+            selection there. ``point`` from pyvista's tracker comes off its default
+            POINT picker (snaps to dataset vertices — the plate mesh is coarse), so
+            re-pick with the fresh z-buffer world picker at the event position."""
+            if self.tabs.currentIndex() != 0:
                 return
-            x, y, z = float(point[0]), float(point[1]), float(point[2])
-            bx, by, bz = self.cfg.machine.build_volume_mm
-            if not (0 <= x <= bx and 0 <= y <= by and -1.0 <= z <= bz):
+            pick = self._world_pick_xy(self.interactor.iren.interactor)
+            if pick is None:
                 return
+            x, y = pick
             for part in self.scene.parts:
                 x0, y0, x1, y1 = part.footprint()
                 if x0 <= x <= x1 and y0 <= y <= y1:
@@ -632,9 +655,14 @@ def _build_studio_window():
             self.btn_slice.setEnabled(False)
             self.btn_save.setEnabled(False)
             self.progress.setValue(0)
+            import copy
+
             self._thread = QtCore.QThread()
-            # snapshot: the worker slices a frozen copy; the live scene stays editable
-            self._worker = SliceWorker(self.scene.snapshot(), self.cfg, self.csv_path)
+            # snapshot BOTH the scene and the config: the worker slices frozen
+            # copies, so live edits (transform panel, process-window dialog Apply)
+            # cannot leak into an in-flight slice's plan or preamble.
+            self._worker = SliceWorker(self.scene.snapshot(),
+                                       copy.deepcopy(self.cfg), self.csv_path)
             self._worker.moveToThread(self._thread)
             self._thread.started.connect(self._worker.run)
             self._worker.progress.connect(self._on_progress)
@@ -668,7 +696,9 @@ def _build_studio_window():
             self.btn_save.setEnabled(preview.gcode is not None)
             for line in preview.summary_lines():
                 self._log("  " + line)
-            self.timeline = build_timeline(preview.segments, preview.plan, self.cfg)
+            # the preview carries the frozen cfg its plan was built with — time the
+            # simulation against THAT, not the possibly-edited live cfg
+            self.timeline = build_timeline(preview.segments, preview.plan, preview.cfg)
             self.sim_t = 0.0
             nlayers = len(preview.plan.layers)
             self.layer_slider.blockSignals(True)
@@ -726,8 +756,9 @@ def _build_studio_window():
         def _update_sim_display(self, scrubbed: bool = False):
             if not self.timeline:
                 return
-            state = state_at(self.timeline, self.sim_t, self.cfg.c_axis)
-            self.view.update_head(state, self.cfg)
+            cfg = self.preview.cfg if self.preview else self.cfg
+            state = state_at(self.timeline, self.sim_t, cfg.c_axis)
+            self.view.update_head(state, cfg)
             total = total_duration_s(self.timeline)
             if not scrubbed:
                 self.time_slider.blockSignals(True)

@@ -39,6 +39,8 @@ class CAxisCfg:
     a_max_deg: float = 180.0            # set to the real measured range; decides closed-loop-in-one-pass
     max_speed_deg_s: float = 0.0         # omega_C; sets the slew/curvature limit R = v / omega
     max_drift_deg: float = 0.0           # allowed transient heading lag on curves (keep 0 unless tuned)
+    max_heading_step_deg: float = 15.0   # max DISCRETE per-vertex heading step in contact; sharper
+                                         # corners split into airborne reorients (0 = disabled)
 
 
 @dataclass

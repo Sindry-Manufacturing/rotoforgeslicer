@@ -150,25 +150,136 @@ def test_perimeter_loops_walls_plus_inset_raster():
     cfg = _cfg(mode="raster", perimeter_loops=2)
     sq = _square(half=12.0)
     lp = plan_layer(Layer(0, 0.06, [sq]), cfg, operating_point=_op(cfg), e_per_path=1.0)
-    walls = [p for p in lp.passes if p.is_curved]
-    lines = [p for p in lp.passes if not p.is_curved]
-    assert walls and lines                                     # both kinds present
-    assert lp.passes[-1] in walls                              # walls deposited last
-    # raster is inset past the innermost wall: hatch x-extent well inside the region
     inset = inset_interior(sq, cfg, 2)
     ix0, _, ix1, _ = inset.bounds
-    for p in lines:
-        assert ix0 - 1e-6 <= p.start[0] <= ix1 + 1e-6
+    # square wall rings split at their corners (heading-step rule) into straight
+    # sides; a raster hatch line is vertical AND inside the inset interior.
+    def is_hatch(p):
+        return (abs(p.start[0] - p.end[0]) < 1e-6
+                and ix0 - 1e-6 <= p.start[0] <= ix1 + 1e-6)
+    hatch = [p for p in lp.passes if is_hatch(p)]
+    walls = [p for p in lp.passes if not is_hatch(p)]
+    assert hatch and walls                                     # both kinds present
+    assert any(abs(p.start[1] - p.end[1]) < 1e-6 for p in walls)  # horizontal sides
+    assert not is_hatch(lp.passes[-1])                         # walls deposited last
 
 
 def test_inset_interior_consumed_by_walls_is_empty():
     cfg = _cfg()
     tiny = _square(half=1.5)                                   # 3 mm square
-    assert inset_interior(tiny, cfg, 2).is_empty
-    assert perimeter_paths(tiny, cfg) == [] if cfg.fill.perimeter_loops == 0 else True
+    walls, fitted = perimeter_paths(tiny, _cfg(perimeter_loops=2))
+    assert fitted >= 1 and walls
+    assert inset_interior(tiny, cfg, 2).is_empty               # nothing left inside
 
 
 def test_open_path_returned_unchanged_by_extreme_rotation():
     cfg = CAxisCfg()
     open_path = [(0, 0), (5, 0), (10, 3)]
     assert rotate_ring_to_extreme(open_path, cfg) == open_path
+
+
+def test_sharp_corners_split_into_airborne_reorients():
+    # review fix (hardware): a dead-sharp corner between long legs slips past the
+    # circumradius proxy, but the firmware would interpolate the A step across the
+    # whole next in-contact segment — off-tangent scrubbing. Corners sharper than
+    # max_heading_step_deg must break the pass.
+    from rotoforge_slicer.fill.curvature import split_on_heading_step
+
+    square_ring = [(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)]
+    subs = split_on_heading_step(square_ring, 15.0)
+    assert len(subs) == 4                                      # one pass per side
+    assert split_on_heading_step(square_ring, 0.0) == [square_ring]  # disabled
+
+    cfg = _cfg(mode="outline")
+    lp = plan_layer(Layer(0, 0.06, [_square(half=10.0)]), cfg,
+                    operating_point=_op(cfg), e_per_path=1.0)
+    assert len(lp.passes) >= 4                                 # sides, not one ring
+    for p in lp.passes:                                        # no step survives
+        a = p.axis_angles(cfg.c_axis)
+        assert all(abs(b - c) <= 15.0 + 1e-6 for b, c in zip(a, a[1:]))
+
+
+def test_emitter_proves_the_heading_step_limit():
+    # a synthetic 90-deg in-contact corner must be REJECTED by the emitter even if a
+    # (buggy or foreign) planner produced it — the emitter proves, never trusts.
+    from rotoforge_slicer.toolpath.passplan import LayerPlan, Pass
+
+    cfg = _cfg()
+    bad = Pass.curved([(190, 100), (190, 120), (210, 120)],   # 90-deg corner
+                      z=0.06, rpm=5000, traverse_mm_min=120.0,
+                      e_per_path_mm=1.0, c_axis=cfg.c_axis)
+    plan = ToolpathPlan([LayerPlan(0, 0.06, [bad])], 5000, 120.0, 120.0)
+    with pytest.raises(ValueError, match="steps"):
+        GCodeEmitter(cfg).emit(plan)
+
+
+def test_unreachable_headings_deposit_in_reverse_on_sub_360_range():
+    # review fix: a real (calibrated, sub-360deg) axis range leaves some headings
+    # unreachable at any winding; there is no privileged direction (D13), so those
+    # arcs deposit in REVERSE instead of aborting the slice.
+    from rotoforge_slicer.toolpath.passplan import split_unreachable
+
+    c = CAxisCfg(a_min_deg=-170.0, a_max_deg=170.0)
+    minus_y = [(190.0, 130.0), (190.0, 100.0)]                # heading -Y: A=±180
+    subs = split_unreachable(minus_y, c)
+    assert subs == [[(190.0, 100.0), (190.0, 130.0)]]         # reversed -> +Y, A=0
+
+    # -Y reverses to +Y (A=0), reachable even on a narrow range — use a -X segment
+    # instead: A=90 forward and A=-90 reversed are BOTH outside ±80.
+    too_narrow = CAxisCfg(a_min_deg=-80.0, a_max_deg=80.0)    # < 180 deg wide
+    minus_x = [(210.0, 100.0), (190.0, 100.0)]
+    with pytest.raises(ValueError, match="either travel direction"):
+        split_unreachable(minus_x, too_narrow)
+
+
+def test_contour_slices_and_emits_on_a_calibrated_sub_360_range():
+    # the M17 headline case on a REAL machine range: rings still trace (arcs, some
+    # reversed, airborne unwinds between) and the emitter accepts the result.
+    cfg = _cfg(mode="contour")
+    cfg.c_axis.a_min_deg, cfg.c_axis.a_max_deg = -170.0, 170.0
+    disc = Point(190, 110).buffer(12.0)
+    lp = plan_layer(Layer(0, 0.06, [disc]), cfg, operating_point=_op(cfg),
+                    e_per_path=1.0)
+    assert len(lp.passes) >= 8                                # rings trace as arcs
+    assert all(not (abs(p.points[0][0] - p.points[-1][0]) < 1e-9
+                    and abs(p.points[0][1] - p.points[-1][1]) < 1e-9)
+               for p in lp.passes)                            # no full ring survives
+    plan = ToolpathPlan([lp], 5000, 120.0, 120.0)
+    g = GCodeEmitter(cfg).emit(plan)                          # §6.3 validators pass
+    assert "M84" in g
+
+
+def test_thin_rib_gets_infill_when_requested_walls_do_not_fit():
+    # review fix: inset by the walls that actually FIT — a 2.6 mm rib with
+    # perimeter_loops=2 fits one wall; the interior must still get a hatch line
+    # instead of a silent longitudinal void.
+    from rotoforge_slicer.fill.contour import perimeter_paths
+
+    cfg = _cfg(mode="raster", perimeter_loops=2)
+    rib = Polygon([(180, 100), (210, 100), (210, 102.6), (180, 102.6)])
+    walls, fitted = perimeter_paths(rib, cfg)
+    assert fitted == 1 and walls                              # only one wall fits
+    assert not inset_interior(rib, cfg, fitted).is_empty      # interior remains
+    # hatch ALONG the rib (heading 0) so the core lines beat min_deposit_len; a
+    # core hatch line is horizontal at the rib's mid-height (walls sit at ±0.5)
+    lp = plan_layer(Layer(0, 0.06, [rib]), cfg, operating_point=_op(cfg),
+                    e_per_path=1.0, heading_deg=0.0)
+    assert any(abs(p.start[1] - p.end[1]) < 1e-6
+               and abs(p.start[1] - 101.3) < 0.4 for p in lp.passes)
+
+
+def test_wall_to_infill_spacing_is_one_pitch():
+    # review fix: the infill boundary retreats HALF a pitch past the innermost wall
+    # centreline, so the first hatch line (pitch/2 inside the boundary) sits exactly
+    # one pitch from the wall — no unfused seam.
+    from rotoforge_slicer.fill.raster import raster_pitch
+
+    cfg = _cfg()
+    pitch = raster_pitch(cfg)
+    sq = _square(half=12.0)
+    inner = inset_interior(sq, cfg, 1)
+    wall_centre_depth = wall_depth_mm(cfg, 0)
+    ix0 = inner.bounds[0]
+    first_line_x = ix0 + pitch / 2.0
+    wall_x = sq.bounds[0] + wall_centre_depth
+    assert first_line_x - wall_x == pytest.approx(pitch, abs=1e-9)

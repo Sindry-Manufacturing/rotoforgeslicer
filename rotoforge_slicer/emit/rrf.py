@@ -315,14 +315,20 @@ class GCodeEmitter:
         a_segs = p.axis_angles(cfg.c_axis)
         for a in a_segs:
             validate_axis_angle(a, cfg.c_axis)
+        # Per-vertex A step limit: the firmware interpolates each step across the NEXT
+        # in-contact segment, so a sharp corner (large discrete step, any leg length)
+        # is sustained off-tangent contact — side-scrubbing. The planner splits these
+        # (split_on_heading_step); prove it here. With the limit disabled (<= 0) fall
+        # back to the absolute rule: a step that REACHES ±180 is a hairpin cusp, never
+        # a valid single G1. (Strict `> 180+eps` would miss the exact-180° reversal.)
+        step_limit = cfg.c_axis.max_heading_step_deg
+        max_step = (step_limit + 1e-6) if step_limit > 0 else (180.0 - 1e-6)
         for a0, a1 in zip(a_segs, a_segs[1:]):
-            # unwrap keeps consecutive A within (-180, 180]; a step that REACHES ±180 is a
-            # hairpin cusp — a ≥180° in-contact swing that is never a valid single G1 and
-            # must have been split. (Strict `> 180+eps` would miss the exact-180° reversal.)
-            if abs(a1 - a0) > 180.0 - 1e-6:
+            if abs(a1 - a0) > max_step:
                 raise ValueError(
-                    f"A axis swings {a1 - a0:.1f} deg between deposition segments — a ≥180°"
-                    " in-contact reversal (cusp) is never a valid single move; split it "
+                    f"A axis steps {a1 - a0:.1f} deg between deposition segments — an "
+                    f"in-contact turn sharper than the {max_step:.1f} deg limit is "
+                    "off-tangent scrubbing; split it with an airborne reorient "
                     "(SPEC §4.3 / D13)")
         r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
         if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
@@ -369,7 +375,7 @@ class GCodeEmitter:
                         f"[{spindle.rpm_min},{spindle.rpm_max}] (SPEC §1.3)")
 
     @staticmethod
-    def _validate_a_in_axis_range(a_values, c_axis, tol: float = 1e-6) -> None:
+    def _validate_a_in_axis_range(a_values, c_axis, tol: float = 1e-3) -> None:
         """SPEC §6.3 (D13): every commanded A target — deposition AND airborne
         reorientation — lies within the usable continuous axis range
         ``[a_min_deg, a_max_deg]``. The head rotates as a unit so any heading deposits;

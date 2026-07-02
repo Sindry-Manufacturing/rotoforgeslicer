@@ -17,6 +17,11 @@ def preamble(cfg: Config) -> list[str]:
         lines.append(f"M140 S{cfg.process.bed_temp_c:g}")
         lines.append(f"M190 S{cfg.process.bed_temp_c:g}")
     for macro in cfg.gcode.preamble_macros:
+        # process.hotshoe_macro is the single source of truth for the hotshoe
+        # temperature target (set per material in the GUI); the static preamble
+        # list only marks WHERE the hotshoe call goes.
+        if macro.startswith("Hotshoe"):
+            macro = cfg.process.hotshoe_macro
         lines.append(f'M98 P"{macro}"')
     lines.append("; --- end preamble ---")
     return lines

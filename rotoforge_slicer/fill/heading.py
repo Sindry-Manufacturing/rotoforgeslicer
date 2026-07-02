@@ -29,12 +29,18 @@ def heading_to_a_deg(theta_deg: float, cfg: CAxisCfg) -> float:
     return cfg.invert_sign * (theta_deg - cfg.home_heading_deg) + cfg.home_offset_deg
 
 
-def within_axis_range(a_deg: float, cfg: CAxisCfg, tol: float = 1e-9) -> bool:
+def within_axis_range(a_deg: float, cfg: CAxisCfg, tol: float = 1e-3) -> bool:
     """True if an A-axis angle lies within the usable continuous range [a_min, a_max].
 
     This is the *only* hard heading limit under D13 — there is no wedge. It is checked
     against the winding-resolved (continuous) A, so a heading that maps to an
     out-of-range raw A may still be reachable at a different winding.
+
+    The default tolerance is 1e-3 deg: the planner's winding acceptance
+    (``_band_fits`` / ``winding_shift``) carries 1e-6 of a full turn (3.6e-4 deg) of
+    seat slack per band edge, so validation must accept at least that much or a
+    range-grazing ring that plans successfully would bounce at emit. A millidegree
+    is far below any physical stop tolerance.
     """
     return cfg.a_min_deg - tol <= a_deg <= cfg.a_max_deg + tol
 

@@ -23,6 +23,8 @@ c_axis:
   a_max_deg: 180                 # >>> set to the REAL measured range; decides closed-loop-in-one-pass
   max_speed_deg_s: 360.0         # omega_C, measured on hardware: 360 deg/s -> R_min = v/omega
   max_drift_deg: 0.0             # allowed transient heading lag on curves (keep 0 unless tuned)
+  max_heading_step_deg: 15.0     # max discrete per-vertex heading step in contact; sharper corners
+                                 # become airborne reorients (a sharp corner is NOT a followable turn)
 
 spindle:
   rpm_min: 5000

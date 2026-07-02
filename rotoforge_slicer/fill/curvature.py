@@ -48,6 +48,43 @@ def min_radius(path_xy) -> float:
                for i in range(1, len(pts) - 1))
 
 
+def heading_step_deg(p0, p1, p2) -> float:
+    """|heading change| at vertex ``p1`` between segments p0→p1 and p1→p2, in
+    (-180, 180] magnitude — the DISCRETE turn the C axis must make at the vertex."""
+    t0 = math.degrees(math.atan2(p1[1] - p0[1], p1[0] - p0[0]))
+    t1 = math.degrees(math.atan2(p2[1] - p1[1], p2[0] - p1[0]))
+    return abs((t1 - t0 + 180.0) % 360.0 - 180.0)
+
+
+def split_on_heading_step(path_xy, max_step_deg: float):
+    """Split a polyline at vertices whose DISCRETE heading step exceeds
+    ``max_step_deg`` (SPEC §4.3 / D13 corner rule).
+
+    The circumradius proxy scales with segment length, so a dead-sharp corner
+    between long legs (true turn radius 0) reads as a huge radius and slips past
+    ``split_on_curvature`` — yet the emitter commands the new A on the NEXT G1 and
+    the firmware interpolates the whole rotation across that in-contact segment:
+    the wheel runs up to the full step off the travel tangent (drift violation —
+    side-scrubbing). Any vertex turn sharper than ``max_step_deg`` must become an
+    airborne lift-reorient-replunge. Densely-sampled smooth curves (streamlines,
+    contour rings) step a few degrees per vertex and pass untouched; polygon
+    corners split. ``max_step_deg <= 0`` disables the rule (legacy behavior).
+    """
+    pts = list(path_xy)
+    if max_step_deg <= 0 or len(pts) < 3:
+        return [pts] if len(pts) >= 2 else []
+    out = []
+    cur = [pts[0]]
+    for i in range(1, len(pts) - 1):
+        cur.append(pts[i])
+        if heading_step_deg(pts[i - 1], pts[i], pts[i + 1]) > max_step_deg:
+            out.append(cur)            # break AT the sharp vertex
+            cur = [pts[i]]
+    cur.append(pts[-1])
+    out.append(cur)
+    return [s for s in out if len(s) >= 2]
+
+
 def split_on_curvature(path_xy, v_mm_s: float, omega_max_deg_s: float):
     """Split a polyline where the local radius < r_min(v). SPEC §4.3.
 

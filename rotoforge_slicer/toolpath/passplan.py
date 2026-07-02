@@ -216,6 +216,49 @@ def _band_fits(lo: float, hi: float, a_min: float, a_max: float,
     return k_lo <= k_hi
 
 
+def _reachable(a_deg: float, a_min: float, a_max: float, tol: float = 1e-6) -> bool:
+    """True if the heading's A is reachable at SOME winding (``_band_fits`` of a
+    single angle): sub-360° ranges leave a gap of headings no winding can reach."""
+    return _band_fits(a_deg, a_deg, a_min, a_max, tol)
+
+
+def split_unreachable(points, c_axis, tol: float = 1e-6):
+    """Make every segment's heading reachable, reversing arcs where needed (D13).
+
+    A sub-360° axis range cannot reach every heading at any winding — but there is
+    **no privileged direction**, so an arc whose forward heading falls in the
+    unreachable gap can be deposited in REVERSE (θ+180°, which is reachable
+    whenever the range is ≥180° wide). Splits the polyline into maximal runs of
+    same-reachability segments and flips the unreachable runs; the boundaries are
+    airborne reorients (pass breaks). Raises only when a heading is unreachable in
+    BOTH directions (range narrower than 180°) — genuinely impossible, reorient the
+    part. On a ≥360° range every heading is reachable and this returns ``[points]``.
+    """
+    pts = [tuple(p) for p in points]
+    if len(pts) < 2:
+        return []
+    a_min, a_max = c_axis.a_min_deg, c_axis.a_max_deg
+    segs_a = [heading_to_a_deg(heading_deg_from_vector(b[0] - a[0], b[1] - a[1]), c_axis)
+              for a, b in zip(pts, pts[1:])]
+    ok = []
+    for a in segs_a:
+        fwd = _reachable(a, a_min, a_max, tol)
+        if not fwd and not _reachable(a + 180.0, a_min, a_max, tol):
+            raise ValueError(
+                f"segment heading maps to A={a:.1f} deg, unreachable in either travel "
+                f"direction within the axis range [{a_min}, {a_max}] — the range is "
+                "narrower than 180 deg; widen it or reorient the part (D13)")
+        ok.append(fwd)
+    subs: List[list] = []
+    start = 0
+    for i in range(1, len(ok) + 1):
+        if i == len(ok) or ok[i] != ok[start]:
+            sub = pts[start:i + 1]                    # segments start..i-1
+            subs.append(sub if ok[start] else list(reversed(sub)))
+            start = i
+    return subs
+
+
 def split_on_winding(points, c_axis, tol: float = 1e-6):
     """Break a polyline where the accumulated axis angle can no longer be wound into the
     usable range (D13).
@@ -289,22 +332,26 @@ def plan_axis_winding(passes, c_axis, tol: float = 1e-6):
 def _curved_passes(paths, layer_z, cfg: Config, op: OperatingPoint,
                    e_per_path: float) -> List[Pass]:
     """The D13 constraint pipeline for curved paths (streamlines, contour rings,
-    perimeter walls): split on the slew limit first (SPEC §4.3), then on the usable
-    axis range (``split_on_winding``); sub-passes below ``min_deposit_len`` drop.
+    perimeter walls): split at sharp corners (discrete heading steps the axis
+    cannot follow in contact), reverse-orient arcs whose headings a sub-360° range
+    cannot reach, split on the slew limit (SPEC §4.3), then on the usable axis
+    range (``split_on_winding``); sub-passes below ``min_deposit_len`` drop.
     Path order is preserved (callers order paths deliberately)."""
-    from ..fill.curvature import split_on_curvature
+    from ..fill.curvature import split_on_curvature, split_on_heading_step
 
     min_len = cfg.process.min_deposit_len_mm
     v_s = op.traverse_mm_min / 60.0
     out: List[Pass] = []
     for path in paths:
-        for sub_c in split_on_curvature(path, v_s, cfg.c_axis.max_speed_deg_s):
-            for sub in split_on_winding(sub_c, cfg.c_axis):
-                if _polyline_len(sub) >= min_len:
-                    out.append(Pass.curved(
-                        sub, z=layer_z, rpm=op.rpm,
-                        traverse_mm_min=op.traverse_mm_min,
-                        e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+        for sub_s in split_on_heading_step(path, cfg.c_axis.max_heading_step_deg):
+            for sub_r in split_unreachable(sub_s, cfg.c_axis):
+                for sub_c in split_on_curvature(sub_r, v_s, cfg.c_axis.max_speed_deg_s):
+                    for sub in split_on_winding(sub_c, cfg.c_axis):
+                        if _polyline_len(sub) >= min_len:
+                            out.append(Pass.curved(
+                                sub, z=layer_z, rpm=op.rpm,
+                                traverse_mm_min=op.traverse_mm_min,
+                                e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
     return out
 
 
@@ -340,10 +387,12 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
     loops = cfg.fill.perimeter_loops
     wall_passes: List[Pass] = []
     for region in layer.regions:
-        infill_region = inset_interior(region, cfg, loops)
+        fitted = 0
         if loops > 0:
-            wall_passes.extend(_curved_passes(
-                perimeter_paths(region, cfg), layer.z, cfg, op, e_per_path))
+            walls, fitted = perimeter_paths(region, cfg)
+            wall_passes.extend(_curved_passes(walls, layer.z, cfg, op, e_per_path))
+        # inset by the walls that actually FIT — phantom walls would leave voids
+        infill_region = inset_interior(region, cfg, fitted)
         if infill_region.is_empty:
             continue
 

@@ -186,6 +186,14 @@ def select_operating_point(csv_path: str, mode: str = "auto",
 
     v_min = min(_trav(r) for r in sel)
     v_max = max(_trav(r) for r in sel)
+    if traverse_target > 0 and not (v_min - 1e-9 <= traverse_target <= v_max + 1e-9):
+        # a target outside the stable run means the selection is STALE (profile
+        # saved against different data) — snapping silently would run a different
+        # operating point than the operator chose. Fail loud (project ethos).
+        raise ValueError(
+            f"traverse_target {traverse_target:g} mm/min lies outside the ray's "
+            f"contiguous stable run [{v_min:g}, {v_max:g}] — the material profile / "
+            "selection does not match this screener CSV; re-pick the operating window")
     want = traverse_target if traverse_target > 0 else 0.5 * (v_min + v_max)
     rep = min(sel, key=lambda r: abs(_trav(r) - want))
     rpm = int(round(float(rep["rpm"])))

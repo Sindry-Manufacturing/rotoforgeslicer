@@ -100,6 +100,29 @@ def test_material_profiles_roundtrip_and_apply(tmp_path):
     assert cfg.screener.revs_per_mm_mode == "auto"
 
 
+def test_traverse_target_outside_the_run_fails_loud(tmp_path):
+    # review fix: a target outside the contiguous stable run means the selection is
+    # stale (profile saved against different data) — snapping silently would run a
+    # different operating point than the operator chose.
+    csv = _csv(tmp_path, _cells(150, [80, 90, 100, 110, 120]))
+    with pytest.raises(ValueError, match="outside the ray"):
+        select_operating_point(csv, mode="manual", target=150.0, tol=5.0,
+                               rpm_min=5000, rpm_max=30000, traverse_target=500.0)
+
+
+def test_hotshoe_macro_reaches_the_emitted_preamble():
+    # review fix: process.hotshoe_macro was dead config — the preamble emitted the
+    # static YAML macro regardless of the material's hotshoe target.
+    from rotoforge_slicer.emit.templates import preamble
+
+    cfg = Config()
+    MaterialProfile(name="hot", hotshoe_temp_c=450.0).apply_to_cfg(cfg)
+    lines = preamble(cfg)
+    assert 'M98 P"Hotshoe_450C.g"' in lines
+    assert 'M98 P"Hotshoe_300C.g"' not in lines
+    assert 'M98 P"CPAP_100pct.g"' in lines          # other macros untouched
+
+
 def test_load_profiles_missing_file_is_empty(tmp_path):
     assert load_profiles(tmp_path / "nope.yaml") == {}
 

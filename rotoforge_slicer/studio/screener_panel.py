@@ -25,11 +25,16 @@ from .materials import (
 
 
 def profiles_path() -> Path:
-    """Material profiles live next to the machine config when running from the
-    repo; a frozen app (no writable ``config/``) falls back to the user's home."""
-    repo_cfg = Path.cwd() / "config"
-    if repo_cfg.is_dir():
-        return repo_cfg / "materials.yaml"
+    """Material profiles live next to the machine config in a source checkout
+    (anchored to the PACKAGE location, never the process cwd — an unrelated
+    ``config/`` folder in the working directory must not capture user profiles);
+    a frozen app (read-only, temporary bundle dir) uses the user's home."""
+    import sys
+
+    if not getattr(sys, "frozen", False):
+        repo_cfg = Path(__file__).resolve().parents[2] / "config"
+        if repo_cfg.is_dir():
+            return repo_cfg / "materials.yaml"
     return Path.home() / ".rotoforge" / "materials.yaml"
 
 
@@ -55,7 +60,9 @@ def open_screener_dialog(win) -> None:
     side = QtWidgets.QVBoxLayout()
     root.addLayout(side)
 
-    state = {"rows": [], "run": []}
+    # ALL selection state is dialog-local until "Apply to slicer" — browsing a CSV
+    # or a material profile must not touch the live config / main-window CSV.
+    state = {"rows": [], "run": [], "csv": win.csv_path}
     tol = win.cfg.screener.revs_per_mm_tol
 
     csv_lbl = QtWidgets.QLabel("no CSV loaded")
@@ -159,6 +166,7 @@ def open_screener_dialog(win) -> None:
             v_slider.setValue(i)                 # snaps to the nearest measured cell
 
     def load_csv(path=None):
+        """Load a CSV into the DIALOG only; the main window's CSV changes on Apply."""
         if path is None:
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
                 dlg, "Open process-window CSV", "", "CSV (*.csv);;All files (*)")
@@ -169,8 +177,7 @@ def open_screener_dialog(win) -> None:
         except Exception as e:
             csv_lbl.setText(f"ERROR: {e}")
             return
-        win.csv_path = path
-        win.csv_lbl.setText(Path(path).name)
+        state["csv"] = path
         csv_lbl.setText(Path(path).name)
         ray_box.blockSignals(True)
         ray_box.clear()
@@ -181,20 +188,29 @@ def open_screener_dialog(win) -> None:
         refresh_run()
 
     def apply_to_cfg():
+        """The single commit point: what the map DISPLAYS is what the slicer runs.
+
+        Even with 'auto' selected in the combo, the ray is PINNED as a manual
+        target — the pipeline's auto search walks candidates differently than the
+        dialog's highlight and could pick another ray, silently running at a
+        different RPM/feed than displayed. WYSIWYG or nothing."""
         cell = chosen_cell()
         nv = selected_nv()
-        if ray_box.currentIndex() <= 0:
-            win.cfg.screener.revs_per_mm_mode = "auto"
+        if nv is None:
+            win.cfg.screener.revs_per_mm_mode = "auto"      # no data loaded
             win.cfg.screener.revs_per_mm_target = 0.0
         else:
             win.cfg.screener.revs_per_mm_mode = "manual"
-            win.cfg.screener.revs_per_mm_target = nv or 0.0
+            win.cfg.screener.revs_per_mm_target = nv
         win.cfg.screener.traverse_target = _trav(cell) if cell else 0.0
         win.cfg.process.bed_temp_c = bed_spin.value()
         win.cfg.process.hotshoe_macro = hotshoe_macro_name(hot_spin.value())
+        if state["csv"]:
+            win.csv_path = state["csv"]
+            win.csv_lbl.setText(Path(state["csv"]).name)
         win._log(
-            f"process window applied: ray="
-            f"{'auto' if ray_box.currentIndex() <= 0 else f'{nv:g} revs/mm'}"
+            f"process window applied: "
+            f"{f'ray {nv:g} revs/mm (pinned)' if nv is not None else 'auto'}"
             f"{f', v={_trav(cell):g} mm/min' if cell else ''}, "
             f"bed {bed_spin.value():g} °C, "
             f"hotshoe {hot_spin.value():g} °C ({win.cfg.process.hotshoe_macro})")
@@ -205,10 +221,10 @@ def open_screener_dialog(win) -> None:
             csv_lbl.setText("enter a material name to save")
             return
         cell = chosen_cell()
-        nv = selected_nv() if ray_box.currentIndex() > 0 else 0.0
+        nv = selected_nv()          # save the DISPLAYED ray (pinned; WYSIWYG)
         profs = load_profiles(profiles_path())
         profs[name] = MaterialProfile(
-            name=name, csv_path=win.csv_path or "",
+            name=name, csv_path=state["csv"] or "",
             revs_per_mm=nv or 0.0,
             traverse_mm_min=_trav(cell) if cell else 0.0,
             bed_temp_c=bed_spin.value(), hotshoe_temp_c=hot_spin.value())
@@ -227,26 +243,35 @@ def open_screener_dialog(win) -> None:
         mat_box.blockSignals(False)
 
     def on_material(index):
+        """Populate the DIALOG from a profile — nothing touches the live config
+        until Apply. A profile whose CSV is missing loads only its thermal targets
+        and says so loudly (silently pairing its ray/traverse with whatever CSV
+        happens to be loaded would run the wrong material's window)."""
         prof = mat_box.itemData(index)
         if prof is None:
             return
-        prof.apply_to_cfg(win.cfg)
         bed_spin.setValue(prof.bed_temp_c)
         hot_spin.setValue(prof.hotshoe_temp_c)
         mat_name.setText(prof.name)
-        if prof.csv_path and Path(prof.csv_path).exists():
-            load_csv(prof.csv_path)
-            if prof.revs_per_mm > 0:            # reselect the profile's ray + cell
-                for i in range(1, ray_box.count()):
-                    if abs(float(ray_box.itemData(i)) - prof.revs_per_mm) <= tol:
-                        ray_box.setCurrentIndex(i)
-                        break
-                run = state["run"]
-                if run and prof.traverse_mm_min > 0:
-                    j = min(range(len(run)), key=lambda k: abs(
-                        _trav(run[k]) - prof.traverse_mm_min))
-                    v_slider.setValue(j)
-        win._log(f"material profile loaded: {prof.name}")
+        if not prof.csv_path or not Path(prof.csv_path).exists():
+            csv_lbl.setText(f"PROFILE CSV MISSING: {prof.csv_path or '(none)'} — "
+                            "temperatures loaded; re-pick the operating window")
+            win._log(f"material profile {prof.name}: CSV missing "
+                     f"({prof.csv_path or 'none'}); only temps loaded")
+            return
+        load_csv(prof.csv_path)
+        if prof.revs_per_mm > 0:                # reselect the profile's ray + cell
+            for i in range(1, ray_box.count()):
+                if abs(float(ray_box.itemData(i)) - prof.revs_per_mm) <= tol:
+                    ray_box.setCurrentIndex(i)
+                    break
+            run = state["run"]
+            if run and prof.traverse_mm_min > 0:
+                j = min(range(len(run)), key=lambda k: abs(
+                    _trav(run[k]) - prof.traverse_mm_min))
+                v_slider.setValue(j)
+        win._log(f"material profile loaded into the dialog: {prof.name} "
+                 "(Apply to commit)")
 
     btn_csv.clicked.connect(lambda: load_csv())
     ray_box.currentIndexChanged.connect(lambda *_: refresh_run())

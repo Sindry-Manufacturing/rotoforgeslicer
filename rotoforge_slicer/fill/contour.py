@@ -11,13 +11,20 @@ one winding when the range allows; on a narrower range the winding split breaks 
 into arcs with airborne unwinds (the D13 annulus case: rings trace, breaking only
 where winding/curvature requires).
 
+On a **sub-360°** calibrated range some headings are unreachable at any winding —
+the planner then deposits those arcs in REVERSE (``split_unreachable``; D13, no
+privileged direction), so rings still trace on a real machine. Sharp polygon
+corners are split into airborne reorients by the per-vertex heading-step rule
+(``split_on_heading_step``) — a dead-sharp corner is not a followable turn.
+
 Modes (SPEC §4.2 / ROADMAP M17, selected via ``fill.mode`` / ``fill.perimeter_loops``):
 
 * ``outline``  — the outermost wall loop only (one ring set per boundary);
 * ``contour``  — concentric rings all the way in (full contour fill);
 * *perimeter walls* — ``fill.perimeter_loops = N`` with mode raster/streamline lays
   N wall loops, then hands the inset interior to the normal fill
-  (``inset_interior``).
+  (``inset_interior`` — inset by the walls that actually FIT, so thin regions get
+  infill instead of silent voids).
 
 The first wall centreline sits ``bead_width/2`` inside the boundary; successive
 walls step inward by the raster pitch. shapely does the offsetting (erosion shrinks
@@ -65,16 +72,11 @@ def wall_depth_mm(cfg: Config, k: int) -> float:
     return cfg.process.bead_width_mm / 2.0 + k * raster_pitch(cfg)
 
 
-def contour_rings(region, cfg: Config, *, max_loops: int = 0) -> List[Ring]:
-    """Concentric wall centreline rings for one region, **outermost first**.
-
-    ``max_loops`` caps the number of offset depths (0 = keep offsetting until the
-    region is consumed — full ``contour`` fill; 1 = ``outline``). Each eroded
-    boundary is simplified by ``fill.contour_simplify_mm`` to keep vertex counts
-    (and G-code size) sane without visibly changing the path.
-    """
+def _rings_by_depth(region, cfg: Config, max_loops: int = 0) -> List[List[Ring]]:
+    """Wall centreline rings per offset depth (outermost depth first); stops at the
+    first depth whose erosion is empty or at ``max_loops``."""
     simplify = cfg.fill.contour_simplify_mm
-    rings: List[Ring] = []
+    levels: List[List[Ring]] = []
     k = 0
     while True:
         if max_loops and k >= max_loops:
@@ -85,20 +87,35 @@ def contour_rings(region, cfg: Config, *, max_loops: int = 0) -> List[Ring]:
         ring_set = _rings_of(eroded)
         if not ring_set:
             break
-        rings.extend(ring_set)
+        levels.append(ring_set)
         k += 1
-    return rings
+    return levels
+
+
+def contour_rings(region, cfg: Config, *, max_loops: int = 0) -> List[Ring]:
+    """Concentric wall centreline rings for one region, **outermost first**.
+
+    ``max_loops`` caps the number of offset depths (0 = keep offsetting until the
+    region is consumed — full ``contour`` fill; 1 = ``outline``). Each eroded
+    boundary is simplified by ``fill.contour_simplify_mm`` to keep vertex counts
+    (and G-code size) sane without visibly changing the path.
+    """
+    return [r for level in _rings_by_depth(region, cfg, max_loops) for r in level]
 
 
 def inset_interior(region, cfg: Config, loops: int):
     """The region left for raster/streamline infill inside ``loops`` wall loops.
 
-    The innermost wall centreline sits at ``wall_depth(loops-1)``; the infill
-    boundary retreats one further pitch so the hatch does not overlap the wall
-    bead. May be empty (walls consumed the region)."""
+    ``loops`` must be the number of wall depths that actually FIT (see
+    ``perimeter_paths``) — insetting for merely-requested walls leaves silent
+    voids in thin regions. The innermost wall centreline sits at
+    ``wall_depth(loops-1)``; the infill boundary retreats **half** a further pitch,
+    so the hatch (whose first line lands pitch/2 inside its boundary) sits exactly
+    one pitch from the wall centreline — correct bead adjacency, no unfused seam.
+    May be empty (walls consumed the region)."""
     if loops <= 0:
         return region
-    return region.buffer(-(wall_depth_mm(cfg, loops - 1) + raster_pitch(cfg)))
+    return region.buffer(-(wall_depth_mm(cfg, loops - 1) + raster_pitch(cfg) / 2.0))
 
 
 def _seats(lo: float, hi: float, a_min: float, a_max: float,
@@ -117,9 +134,14 @@ def rotate_ring_to_extreme(pts: Ring, c_axis: CAxisCfg) -> Ring:
     winding depends on WHERE the pass starts. This scans the ring's vertices for a
     start whose open-path band fits ``[a_min, a_max]`` at some winding and rotates
     the ring there; ``split_on_winding`` then keeps the whole loop as **one pass**.
-    If no start seats (range too narrow for the sweep), the ring is returned as-is
-    and the winding split breaks it into arcs + airborne unwinds — always safe.
+    If no start seats (range narrower than the sweep), the ring is returned as-is
+    and the planner degrades it: reachable arcs forward, unreachable arcs REVERSED
+    (``split_unreachable``), broken with airborne unwinds — never an invalid pass.
     Non-closed input is returned unchanged.
+
+    O(N): the per-start bands are sliding-window min/max over the doubled cyclic
+    unwrapped-A array (a closed ring's total sweep is a whole number of turns, so
+    the doubled array stays congruent mod 360 — seatability is shift-invariant).
     """
     if len(pts) < 4 or pts[0] != pts[-1]:
         return pts
@@ -128,13 +150,37 @@ def rotate_ring_to_extreme(pts: Ring, c_axis: CAxisCfg) -> Ring:
     headings = [heading_deg_from_vector(cycle[(i + 1) % n][0] - cycle[i][0],
                                         cycle[(i + 1) % n][1] - cycle[i][1])
                 for i in range(n)]                # one per segment, cyclic
+    u = unwrap_headings(headings)                 # continuous, from segment 0
+    sweep = u[-1] + ((headings[0] - u[-1] + 180.0) % 360.0 - 180.0) - u[0]
+    a_ext = [heading_to_a_deg(t, c_axis)
+             for t in u + [ui + sweep for ui in u]]   # doubled cyclic unwrap
+
+    from collections import deque
+
+    lo_q: deque = deque()                         # indices, increasing a
+    hi_q: deque = deque()                         # indices, decreasing a
+    m_found = None
+    j = 0                                         # window is [m, m+n)
     for m in range(n):
-        a = [heading_to_a_deg(t, c_axis) for t in
-             unwrap_headings(headings[m:] + headings[:m])]
-        if _seats(min(a), max(a), c_axis.a_min_deg, c_axis.a_max_deg):
-            rotated = cycle[m:] + cycle[:m]
-            return rotated + [rotated[0]]         # re-close at the seatable start
-    return pts                                    # will split into arcs (safe)
+        while j < m + n:                          # grow the window to size n
+            while lo_q and a_ext[lo_q[-1]] >= a_ext[j]:
+                lo_q.pop()
+            while hi_q and a_ext[hi_q[-1]] <= a_ext[j]:
+                hi_q.pop()
+            lo_q.append(j)
+            hi_q.append(j)
+            j += 1
+        while lo_q[0] < m:
+            lo_q.popleft()
+        while hi_q[0] < m:
+            hi_q.popleft()
+        if _seats(a_ext[lo_q[0]], a_ext[hi_q[0]], c_axis.a_min_deg, c_axis.a_max_deg):
+            m_found = m
+            break
+    if m_found is None:
+        return pts                                # arcs + reversals downstream (safe)
+    rotated = cycle[m_found:] + cycle[:m_found]
+    return rotated + [rotated[0]]                 # re-close at the seatable start
 
 
 def contour_paths(region, cfg: Config, mode: str = "contour") -> List[Ring]:
@@ -153,12 +199,16 @@ def contour_paths(region, cfg: Config, mode: str = "contour") -> List[Ring]:
     return [rotate_ring_to_extreme(r, cfg.c_axis) for r in rings]
 
 
-def perimeter_paths(region, cfg: Config) -> List[Ring]:
-    """The ``fill.perimeter_loops`` wall loops for one region (innermost first),
-    empty when the feature is off. The interior for infill is ``inset_interior``."""
+def perimeter_paths(region, cfg: Config) -> Tuple[List[Ring], int]:
+    """(wall loops for one region — innermost first, number of wall depths that
+    actually FIT). Empty when the feature is off. The fitted count — not the
+    requested ``fill.perimeter_loops`` — must drive ``inset_interior``, or thin
+    regions where fewer walls fit would inset the infill for phantom walls and
+    leave silent internal voids."""
     loops = cfg.fill.perimeter_loops
     if loops <= 0:
-        return []
-    rings = contour_rings(region, cfg, max_loops=loops)
+        return [], 0
+    levels = _rings_by_depth(region, cfg, max_loops=loops)
+    rings = [r for level in levels for r in level]
     rings.reverse()
-    return [rotate_ring_to_extreme(r, cfg.c_axis) for r in rings]
+    return [rotate_ring_to_extreme(r, cfg.c_axis) for r in rings], len(levels)
