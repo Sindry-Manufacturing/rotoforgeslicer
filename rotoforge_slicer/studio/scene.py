@@ -264,6 +264,35 @@ class SceneModel:
                     out.append(f"{a.name} and {b.name}: footprints overlap")
         return out
 
+    # ---- auto-arrange (PrusaSlicer-structure port; studio/arrange.py) -----------
+
+    def arrange(self, cfg, spacing_mm: float = 30.0) -> List[str]:
+        """Auto-place every part on the plate: convex-hull footprints inflated by
+        half the spacing, bed inset by the lead-out envelope (a valid arrangement
+        passes ``issues()`` by construction). Default spacing covers the 50 mm
+        wheel body radius + margin, so the disc working one part clears its
+        neighbours. Returns the names of parts that did not fit."""
+        from shapely.geometry import MultiPoint
+
+        from .arrange import ArrangeItem, RectangleBed, arrange as _arrange
+
+        if not self.parts:
+            return []
+        bx, by, _ = cfg.machine.build_volume_mm
+        bed = RectangleBed(bx, by, inset_mm=cfg.process.lead_out_len_mm)
+        items = []
+        for p in self.parts:
+            hull = MultiPoint([tuple(q[:2]) for q in
+                               p.transformed_vertices()]).convex_hull
+            items.append(ArrangeItem(outline=hull, inflation_mm=spacing_mm / 2.0,
+                                     key=p))
+        unplaced = _arrange(items, [], bed)
+        for it in items:
+            if it.translation is not None:
+                it.key.set_transform(x=it.key.x + it.translation[0],
+                                     y=it.key.y + it.translation[1])
+        return [it.key.name for it in unplaced]
+
     # ---- worker-thread safety ---------------------------------------------------
 
     def snapshot(self) -> "SceneModel":

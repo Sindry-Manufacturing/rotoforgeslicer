@@ -161,6 +161,16 @@ def _build_studio_window():
                 b.clicked.connect(slot)
                 prow.addWidget(b)
             pl.addLayout(prow)
+            arow = QtWidgets.QHBoxLayout()          # PrusaSlicer-style auto-arrange
+            self.btn_arrange = QtWidgets.QPushButton("Arrange")
+            self.btn_arrange.clicked.connect(self._arrange)
+            self.arr_spacing = self._dspin(30.0, 5.0, 120.0, 5.0, 0)
+            self.arr_spacing.setToolTip(
+                "part spacing (mm) — default clears the 50 mm wheel body")
+            arow.addWidget(self.btn_arrange)
+            arow.addWidget(QtWidgets.QLabel("spacing"))
+            arow.addWidget(self.arr_spacing)
+            pl.addLayout(arow)
             lyt.addWidget(pbox)
 
             tbox = QtWidgets.QGroupBox("Transform (selected part)")
@@ -461,6 +471,20 @@ def _build_studio_window():
             self._sync_scene()
             self.view.reset_camera()
             self._log(f"added {part.name}")
+
+        def _arrange(self):
+            if not self.scene.parts:
+                return
+            unplaced = self.scene.arrange(self.cfg, self.arr_spacing.value())
+            self._load_transform_form()
+            self._sync_scene()
+            self.view.reset_camera()
+            if unplaced:
+                self._log(f"arrange: did not fit at {self.arr_spacing.value():g} mm "
+                          f"spacing: {', '.join(unplaced)}")
+            else:
+                self._log(f"arranged {len(self.scene.parts)} part(s) at "
+                          f"{self.arr_spacing.value():g} mm spacing")
 
         def _duplicate(self):
             if self.selected:

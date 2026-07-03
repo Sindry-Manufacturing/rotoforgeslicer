@@ -15,6 +15,24 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Direction decision: PrusaSlicer by PORTING, not forking.** Evaluated forking
+  PrusaSlicer-master (~1M lines C++; MSVC present, deps superbuild required) to
+  "add a Rotoforge mode": rejected — every pipeline stage encodes FFF physics that
+  actively violates our invariants (retraction vs monotonic E, layer-height
+  travels vs airborne rule, no rotary axis in any motion type, volumetric flow vs
+  screener cells, no contact model), and the emitter-side invariant PROOFS would
+  restart from zero inside a foreign codebase. Instead we port PrusaSlicer's
+  subsystems into the validated stack, using the real source as reference (user
+  approved GPL/AGPL). Ported so far: preview UX (earlier), and now **arrange**.
+- **Auto-arrange landed (PrusaSlicer arrange port).** `studio/arrange.py` ports
+  the `slic3r-arrange` architecture: ArrangeItem (hull + inflation + priority +
+  fixed obstacles), RectangleBed with an inset (our lead-out envelope, so a valid
+  arrangement passes `issues()` by construction), first-fit-decreasing selection,
+  TM-kernel scoring (big items minimize pile-bbox growth + gravity to the bed
+  sink; small items nest at the pile centroid; 2% big/small split). NFP candidate
+  generation is replaced by a coarse-to-fine grid + shapely collision (exact
+  enough at our part counts). Studio: Arrange button + spacing spin (default
+  30 mm — clears the 50 mm wheel body); unplaced parts reported. 204 tests green.
 - **Adversarial review of auto-heading/preview — 10 findings fixed.** The big one
   (hardware): the emitter's plunge split creates a chord→segment A junction the
   validators never saw; when the split landed mid-segment past original vertices,

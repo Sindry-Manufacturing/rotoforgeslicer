@@ -121,6 +121,7 @@ def test_studio_window_constructs_offscreen():
         "assert w.layer_range is not None and not w.layer_range.isVisible()\n"
         "assert w.layer_range.clamp(7, 2, 0, 5) == (2, 5)\n"   # order + clamp
         "assert w.move_slider is not None and w.shells_cb is not None\n"
+        "assert w.btn_arrange is not None and w.arr_spacing.value() == 30.0\n"
         "w.close()\n"
         "print('STUDIO_OK')\n"
     )

@@ -55,6 +55,11 @@ and RPM / traverse / revs-per-mm / E readouts, airborne dwells included. Launch 
 `python -m rotoforge_slicer.studio [mesh.stl ...]` — or just the frozen exe, which
 starts the studio by default.
 
+**Auto-arrange (PrusaSlicer arrange port):** one-click multi-part plate layout —
+first-fit-decreasing with TM-kernel scoring, part spacing that clears the 50 mm
+wheel body, and the lead-out envelope as the bed inset, so an arranged plate
+passes the placement checks by construction.
+
 **PrusaSlicer-style preview + auto heading:** Preview hides the mesh so the
 toolpath is always visible (optional ghost "model shells"), with a vertical
 dual-handle **layer range slider** and a horizontal **move slider** that reveals
