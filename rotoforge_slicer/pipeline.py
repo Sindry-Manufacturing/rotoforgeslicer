@@ -57,6 +57,8 @@ def slice_mesh(mesh_path: str, config_path: str,
     from .toolpath.passplan import plan_toolpath
 
     plan = plan_toolpath(model, cfg, operating_point=op)
+    for w in plan.warnings:
+        print(f"NOTE: {w}")
 
     # 2.5D swept-disc + leading-wire collision check (SPEC §4.6); raises on any residual.
     from .toolpath.collision import assert_no_collisions

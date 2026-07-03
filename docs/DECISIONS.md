@@ -82,3 +82,55 @@ splits into arcs + unwinds (safe, just not yet optimal). The contour fill itself
 **Alternatives rejected.** Keeping a wedge / privileged-direction model (physically wrong).
 
 **Status.** Active. Supersedes D3 and D12.
+
+## D14 — Ring seam placement: policies constrained by the winding seat window (port #3)
+
+**Context.** Every closed ring used to start at the FIRST seatable vertex
+(`rotate_ring_to_extreme`), so all rings on all layers seamed at the same
+config-determined bearing — a vertical stripe of lead-out tapers (the known M17
+clustering limitation). PrusaSlicer's seam engine (SeamPlacer/SeamAligned/
+SeamRandom/SeamShells, AGPLv3, ported with permission of the project license)
+provides the policy architecture: nearest / aligned (cross-layer chains) /
+random (deterministic seeded).
+
+**The physics that bounds the feature.** A closed ring's open-path A-band spans
+`360° − δ` (δ = the heading step behind the start vertex; non-convex backtracking
+only widens the span), and the band shifts by whole turns only (the axis zero is
+physical). Seat slack = `W − span` where `W = a_max − a_min`:
+
+* `W = 360` (the ±180 placeholder): the seat window is typically ONE vertex,
+  pinned where A meets the range stop. One-pass rings CANNOT scatter their seams
+  — the stripe is physics. (A corner step δ > 360 − W can seat sharp-cornered
+  rings even on sub-360 ranges — the window is then corner-adjacent.)
+* `W > 360`: the window widens by the extra range — real placement freedom.
+* Off-window starts cost ≥ 1 winding split (an airborne unwind + an extra
+  lead-in/lead-out pair; "exactly one" only for convex rings) and leave a second
+  seam near the stop bearing.
+
+**Decision.** `fill.seam_position: extreme | nearest | aligned | random`
+(default **extreme** = the legacy behavior, byte-identical) with
+`fill.seam_prefer_one_pass` (default true) restricting policies to the seat
+window — but only when the windowed start actually dry-runs to one pass; a
+window that cannot deliver one pass (corner splits) does not confiscate seam
+freedom. Every non-baseline choice passes a **deposit-loss guard**: the rotated
+ring is dry-run through the real split chain (`passplan.curved_subpaths`, shared
+code — the guard cannot drift) and rejected if it drops more sub-`min_deposit_len`
+bead than the extreme baseline (an aligned policy stacking a dropped sliver
+vertically would build an unfused channel). A window-constrained non-extreme
+policy emits a `ToolpathPlan.warnings` note (GUI summary + CLI) instead of
+silently no-oping. `nearest` is a PLAN-ORDER chain (previous ring's seam), not
+PrusaSlicer's emit-time nozzle position; `aligned` matches rings across layers
+by bounding-box distance (the SeamShells port, no one-to-one claiming at our
+ring counts) and accepts a target only when the CANDIDATE set can reach it
+(`fill.seam_align_radius_mm`); `random` is arc-length-weighted over candidate
+vertices with ONE fixed-seed stream per plan (plate-global — a divergence from
+PrusaSlicer's per-object streams; same input still slices to identical G-code).
+Interior winding cuts of unseatable rings also move with the chosen start (the
+start is one of the cuts); reachability-boundary cuts stay config-fixed.
+
+**Alternatives rejected.** Interpolated (non-vertex) seam points (breaks the
+pure-rotation contract the tests pin); rear policy (max-Y has no meaning under
+D13's no-privileged-direction); collision-aware seam steering (lead-outs are not
+collision-swept today — a separate, pre-existing gap).
+
+**Status.** Active. Refines the M17 ring-start rule under D13.

@@ -119,6 +119,9 @@ class ToolpathPlan:
     rpm: int
     traverse_mm_min: float
     v_grind_floor_mm_min: float
+    warnings: List[str] = field(default_factory=list)   # planner notes (e.g. a
+    #                     seam policy constrained by the axis range) — surfaced
+    #                     by the GUI summary and the CLI, never fatal
 
     @property
     def revs_per_mm(self) -> float:
@@ -329,38 +332,49 @@ def plan_axis_winding(passes, c_axis, tol: float = 1e-6):
         "unwinds) is not implemented yet — SPEC §4.1 / DECISIONS D13")
 
 
+def curved_subpaths(path, cfg: Config, v_mm_min: float) -> List[list]:
+    """The D13 split chain for ONE curved path — reachability reversal (must run
+    first: reversing a sub-path swaps which leg is "next" at every interior
+    vertex), sharp-corner heading steps, the slew limit (SPEC §4.3), then the
+    usable axis range (``split_on_winding``). Returns ALL sub-paths, including
+    those below ``min_deposit_len`` — callers decide about drops. Shared by
+    ``_curved_passes`` and the seam-placement deposit-loss guard
+    (``fill.contour.choose_seam_start``), so the guard can never drift from the
+    real pipeline. Raises ``ValueError`` where reachability does (a heading
+    unreachable in either travel direction)."""
+    from ..fill.curvature import split_on_curvature, split_on_heading_step
+
+    v_s = v_mm_min / 60.0
+    subs: List[list] = []
+    for sub_r in split_unreachable(path, cfg.c_axis):
+        for sub_s in split_on_heading_step(sub_r, v_s, cfg.c_axis.max_speed_deg_s,
+                                           cfg.c_axis.max_scrub_deg_mm):
+            for sub_c in split_on_curvature(sub_s, v_s, cfg.c_axis.max_speed_deg_s):
+                subs.extend(split_on_winding(sub_c, cfg.c_axis))
+    return subs
+
+
 def _curved_passes(paths, layer_z, cfg: Config, op: OperatingPoint,
                    e_per_path: float) -> List[Pass]:
     """The D13 constraint pipeline for curved paths (streamlines, contour rings,
-    perimeter walls): split at sharp corners (discrete heading steps the axis
-    cannot follow in contact), reverse-orient arcs whose headings a sub-360° range
-    cannot reach, split on the slew limit (SPEC §4.3), then on the usable axis
-    range (``split_on_winding``); sub-passes below ``min_deposit_len`` drop.
-    Path order is preserved (callers order paths deliberately)."""
-    from ..fill.curvature import split_on_curvature, split_on_heading_step
-
+    perimeter walls) — ``curved_subpaths`` per path; sub-passes below
+    ``min_deposit_len`` drop. Path order is preserved (callers order paths
+    deliberately)."""
     min_len = cfg.process.min_deposit_len_mm
-    v_s = op.traverse_mm_min / 60.0
     out: List[Pass] = []
     for path in paths:
-        # reachability (with its possible arc REVERSALS) must run before the
-        # heading-step check: reversing a sub-path swaps which leg is "next" at
-        # every interior vertex, which would invalidate an earlier step pass
-        for sub_r in split_unreachable(path, cfg.c_axis):
-            for sub_s in split_on_heading_step(sub_r, v_s, cfg.c_axis.max_speed_deg_s,
-                                               cfg.c_axis.max_scrub_deg_mm):
-                for sub_c in split_on_curvature(sub_s, v_s, cfg.c_axis.max_speed_deg_s):
-                    for sub in split_on_winding(sub_c, cfg.c_axis):
-                        if _polyline_len(sub) >= min_len:
-                            out.append(Pass.curved(
-                                sub, z=layer_z, rpm=op.rpm,
-                                traverse_mm_min=op.traverse_mm_min,
-                                e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
+        for sub in curved_subpaths(path, cfg, op.traverse_mm_min):
+            if _polyline_len(sub) >= min_len:
+                out.append(Pass.curved(
+                    sub, z=layer_z, rpm=op.rpm,
+                    traverse_mm_min=op.traverse_mm_min,
+                    e_per_path_mm=e_per_path, c_axis=cfg.c_axis))
     return out
 
 
 def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
-               e_per_path: float, heading_deg: float = 90.0) -> LayerPlan:
+               e_per_path: float, heading_deg: float = 90.0,
+               seam_ctx=None) -> LayerPlan:
     """Build one layer's passes — bidirectional raster, curved streamlines, or M17
     contour/outline rings, plus optional perimeter wall loops (D13).
 
@@ -370,6 +384,10 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
     only the *base* hatch direction. With ``fill.perimeter_loops > 0`` the infill
     modes lay the hatch first, then the wall loops (infill lead-outs then cross only
     not-yet-deposited wall paths); the hatch region is inset past the walls.
+
+    ``seam_ctx`` (a ``fill.contour.SeamContext``, normally created and rolled by
+    ``plan_toolpath``) carries the seam-placement policy state; without it,
+    non-``extreme`` ``fill.seam_position`` values degrade to the extreme start.
     """
     op = operating_point
     min_len = cfg.process.min_deposit_len_mm
@@ -382,7 +400,8 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
         for region in layer.regions:
             # innermost-first ring order from contour_paths; keep it (SPEC §4.6)
             passes.extend(_curved_passes(
-                contour_paths(region, cfg, mode=mode), layer.z, cfg, op, e_per_path))
+                contour_paths(region, cfg, mode=mode, seam_ctx=seam_ctx),
+                layer.z, cfg, op, e_per_path))
         return LayerPlan(index=layer.index, z=layer.z, passes=passes)
 
     # infill modes (raster | streamline), optionally wrapped by perimeter walls
@@ -394,7 +413,7 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
     for region in layer.regions:
         fitted = 0
         if loops > 0:
-            walls, fitted = perimeter_paths(region, cfg)
+            walls, fitted = perimeter_paths(region, cfg, seam_ctx=seam_ctx)
             wall_passes.extend(_curved_passes(walls, layer.z, cfg, op, e_per_path))
         # inset by the walls that actually FIT — phantom walls would leave voids
         infill_region = inset_interior(region, cfg, fitted)
@@ -476,12 +495,36 @@ def plan_toolpath(model, cfg: Config, *,
     op = operating_point or default_operating_point(cfg)
     e_pp = _e_per_path(cfg, op, has_screener)
 
-    layers = [
-        plan_layer(layer, cfg, operating_point=op, e_per_path=e_pp,
-                   heading_deg=layer_heading_deg(cfg, layer.index, heading_deg))
-        for layer in model.layers
-    ]
+    # seam placement (port #3): one context per plan carries the policy state —
+    # the deterministic RNG, the previous layer's seam points (aligned chains),
+    # and the within-layer chain position (nearest)
+    seam_ctx = None
+    plan_warnings: List[str] = []
+    seam_policy = cfg.fill.seam_position
+    if seam_policy not in ("extreme", "nearest", "aligned", "random"):
+        plan_warnings.append(
+            f"unknown fill.seam_position {seam_policy!r}; using 'extreme' "
+            "(valid: extreme, nearest, aligned, random)")
+        seam_policy = "extreme"
+    rings_possible = (cfg.fill.mode in ("contour", "outline")
+                      or cfg.fill.perimeter_loops > 0)
+    if rings_possible and seam_policy != "extreme":
+        from ..fill.contour import SeamContext
+
+        seam_ctx = SeamContext.from_cfg(cfg, v_mm_min=op.traverse_mm_min)
+
+    layers = []
+    for layer in model.layers:
+        layers.append(plan_layer(
+            layer, cfg, operating_point=op, e_per_path=e_pp,
+            heading_deg=layer_heading_deg(cfg, layer.index, heading_deg),
+            seam_ctx=seam_ctx))
+        if seam_ctx is not None:
+            seam_ctx.next_layer()
+    if seam_ctx is not None:
+        plan_warnings.extend(seam_ctx.notes)
     return ToolpathPlan(
         layers=layers, rpm=op.rpm, traverse_mm_min=op.traverse_mm_min,
         v_grind_floor_mm_min=op.v_grind_floor_mm_min,
+        warnings=plan_warnings,
     )

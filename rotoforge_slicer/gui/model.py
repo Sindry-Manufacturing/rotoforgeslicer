@@ -47,6 +47,8 @@ class SlicePreview:
         ]
         if self.operating_point is not None:
             out.append(self.operating_point.summary())
+        for w in getattr(p, "warnings", []) or []:
+            out.append(f"NOTE: {w}")
         if self.collisions:
             out.append(f"COLLISIONS: {len(self.collisions)} (see red rings) — first: "
                        f"{self.collisions[0].detail}")

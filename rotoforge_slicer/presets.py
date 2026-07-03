@@ -85,6 +85,7 @@ PROCESS_KEYS = (
     "fill.mode", "fill.auto_heading", "fill.raster_bidirectional",
     "fill.crosshatch", "fill.crosshatch_angle_deg", "fill.streamline_step_mm",
     "fill.streamline_curl", "fill.perimeter_loops", "fill.contour_simplify_mm",
+    "fill.seam_position", "fill.seam_prefer_one_pass", "fill.seam_align_radius_mm",
     "emit.feed_travel_mm_min", "emit.feed_z_mm_min", "emit.feed_dep_mm_min",
     "emit.dry_run",
     "collision.enabled", "collision.cell_mm", "collision.clearance_mm",

@@ -85,6 +85,15 @@ class FillCfg:
     streamline_curl: float = 0.6         # 0 = straight +Y; higher = more boundary-following
     perimeter_loops: int = 0             # M17: N wall loops before raster/streamline infill (0 = off)
     contour_simplify_mm: float = 0.05    # ring simplification tolerance (keeps G-code size sane)
+    seam_position: str = "extreme"       # ring seam policy (port #3): extreme (first
+                                         # seatable start — the legacy behavior) |
+                                         # nearest | aligned | random
+    seam_prefer_one_pass: bool = True    # restrict the seam to the winding seat window
+                                         # when that actually yields a one-pass ring;
+                                         # false trades >= 1 extra winding split (an
+                                         # airborne unwind + lead pair) for seam freedom
+    seam_align_radius_mm: float = 5.0    # aligned-chain search radius (the SeamShells
+                                         # max_distance port)
 
 
 @dataclass

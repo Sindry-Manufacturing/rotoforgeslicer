@@ -82,9 +82,17 @@ fill:                            # fill strategy (SPEC §4.2)
   mode: raster                   # raster | streamline | contour | outline (M17)
   auto_heading: true             # per-region heading = the region's long axis (D13: no
                                  # privileged direction) -- thin ribs fill lengthwise
+  raster_bidirectional: true     # alternate heading 180 deg between lines (D13; no fly-back)
   crosshatch: false              # alternate the deposition heading between layers
   crosshatch_angle_deg: 30.0     # +/- heading offset on alternating layers (any angle; no wedge -- D13)
   streamline_step_mm: 0.5        # streamline integration step
   streamline_curl: 0.6           # 0 = straight +Y; higher = follows the region boundary more
   perimeter_loops: 0             # M17: wall loops before raster/streamline infill (0 = off)
   contour_simplify_mm: 0.05      # contour ring simplification tolerance (mm)
+  seam_position: extreme         # ring seam policy: extreme | nearest | aligned | random
+                                 # (at a 360-deg-wide axis range one-pass rings pin the seam
+                                 # where A meets the range stop; scattering needs a wider
+                                 # calibrated range or seam_prefer_one_pass: false)
+  seam_prefer_one_pass: true     # keep one-pass rings; false trades >= 1 extra airborne
+                                 # unwind + lead pair per ring for seam placement freedom
+  seam_align_radius_mm: 5.0      # aligned-chain search radius between layers

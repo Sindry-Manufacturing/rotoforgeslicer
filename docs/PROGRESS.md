@@ -15,6 +15,34 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Seam placement landed (PrusaSlicer port #3; D14).** `fill.seam_position:
+  extreme | nearest | aligned | random` chooses each closed ring's start,
+  constrained by the **winding seat window** (`seat_window` — all starts whose
+  A-band seats at some winding, the O(N) generalization of the extreme scan).
+  The load-bearing physics (D14): at a 360°-wide range the window is ~one vertex
+  pinned where A meets the range stop — one-pass rings cannot scatter; freedom
+  comes from a wider calibrated range, or `seam_prefer_one_pass: false` which
+  trades ≥ 1 winding split per ring. Policies (SeamPlacer/SeamAligned/SeamRandom
+  /SeamShells architecture, scoring replaced by our seat/deposit constraints):
+  `nearest` = plan-order chain; `aligned` = cross-layer chains matched by ring
+  bounding-box with a candidate-reachable acceptance radius; `random` =
+  arc-length-weighted, fixed-seed deterministic. Every non-baseline choice
+  passes a **deposit-loss guard** (dry-run through the shared
+  `passplan.curved_subpaths` split chain; never drop more sub-min-length bead
+  than the extreme baseline — an aligned sliver drop would stack into a vertical
+  unfused channel). Window-constrained policies surface a `ToolpathPlan.warnings`
+  note in the GUI summary and CLI. Default `extreme` is byte-identical to the
+  legacy behavior; studio gains a "Ring seam" combo + one-pass checkbox + align
+  radius. The known M17 seam-clustering limitation is now ADDRESSABLE, not
+  auto-fixed: scattering is a physics trade the config makes explicit.
+  Pre-commit campaign (2 design critics reshaped the design: deposit-loss
+  guard, one-pass-only-when-it-buys-one-pass, warnings channel, ring-bbox
+  aligned identity; then find/verify — 4 defects fixed with regressions:
+  the one-pass guard now also rejects windowed starts that SPLIT at a corner
+  the baseline absorbs (teardrop fixture), unknown seam_position values warn
+  and degrade to extreme instead of silently scattering as random, a ring-less
+  layer no longer wipes the aligned/nearest chain, and the random candidate
+  order is lazy). 272 tests green.
 - **Presets + project save/load landed (PrusaSlicer port #2).** `presets.py` ports
   the Preset/PresetBundle architecture (Preset.cpp/PresetBundle.cpp): three preset
   types — **machine / material / process** — each owning an explicit static list of
@@ -222,7 +250,9 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
   multi-part placement, drop-to-bed, click-move). Still open: in-viewport **drag/rotate
   gizmos** and the live **reorientation-break / unwind + curvature-feasibility heatmap**
   (the wedge-coverage metric is gone — D13).
-- **M17 remainder:** the contour core landed (see Recent changes) including the
-  closed-loop-in-one-pass refinement. Still open: seam scattering (every ring starts
-  near the same rotational extreme, so lead-outs cluster in one sector) and
-  contour-direction interaction with the collision approach rule under tall builds.
+- **M17 remainder:** the contour core landed (see Recent changes); seam placement
+  landed as port #3 (D14 — scattering is now a config choice; at the ±180
+  placeholder range one-pass rings still pin to the range stop by physics).
+  Still open: contour-direction interaction with the collision approach rule
+  under tall builds, and lead-out moves are not collision-swept (pre-existing;
+  the wire-lead probe covers only the first 2 mm of the takeoff).

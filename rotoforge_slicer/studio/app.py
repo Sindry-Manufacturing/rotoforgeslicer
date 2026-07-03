@@ -43,6 +43,7 @@ ADVANCED_FIELDS = (
     ("Streamline step (mm)", "fill.streamline_step_mm", 0.1, 5.0, 0.1, 2),
     ("Streamline curl", "fill.streamline_curl", 0.0, 2.0, 0.1, 2),
     ("Contour simplify (mm)", "fill.contour_simplify_mm", 0.0, 1.0, 0.01, 2),
+    ("Seam align radius (mm)", "fill.seam_align_radius_mm", 0.5, 50.0, 0.5, 1),
 )
 
 
@@ -275,6 +276,14 @@ def _build_studio_window():
             self.f_loops.setValue(self.cfg.fill.perimeter_loops)
             self.f_cross = QtWidgets.QCheckBox("crosshatch (alternate heading per layer)")
             self.f_cross.setChecked(self.cfg.fill.crosshatch)
+            self.f_seam = QtWidgets.QComboBox()
+            self.f_seam.addItems(["extreme", "nearest", "aligned", "random"])
+            self.f_seam.setCurrentText(self.cfg.fill.seam_position)
+            self.f_seam.setToolTip(
+                "Ring seam policy (contour/outline/walls). At a 360°-wide axis "
+                "range, one-pass rings pin the seam where A meets the range stop "
+                "— scattering needs a wider calibrated range, or 'prefer one-pass "
+                "rings' off (one extra airborne unwind + lead pair per ring).")
             form.addRow("Layer height (mm)", self.f_lh)
             form.addRow("Bead width (mm)", self.f_bw)
             form.addRow("Raster overlap", self.f_ov)
@@ -283,6 +292,7 @@ def _build_studio_window():
             form.addRow("C-axis A max (deg)", self.f_amax)
             form.addRow("Fill mode", self.f_mode)
             form.addRow("Perimeter loops (M17)", self.f_loops)
+            form.addRow("Ring seam", self.f_seam)
             form.addRow(self.f_cross)
             box = QtWidgets.QGroupBox("Process")
             box.setLayout(form)
@@ -301,6 +311,10 @@ def _build_studio_window():
                 w = self._dspin(float(_cfg_get(self.cfg, path)), lo, hi, step, dec)
                 self.adv_widgets[path] = w
                 adv_form.addRow(label, w)
+            self.adv_seam_onepass = QtWidgets.QCheckBox(
+                "prefer one-pass rings (seam stays in the winding seat window)")
+            self.adv_seam_onepass.setChecked(self.cfg.fill.seam_prefer_one_pass)
+            adv_form.addRow(self.adv_seam_onepass)
             self.adv_dry = QtWidgets.QCheckBox("dry run (no spindle/heat/E)")
             self.adv_dry.setChecked(self.cfg.emit.dry_run)
             adv_form.addRow(self.adv_dry)
@@ -789,8 +803,12 @@ def _build_studio_window():
             if self.f_mode.currentText() != self._param_baseline.get("fill.mode"):
                 self.cfg.fill.mode = self.f_mode.currentText()
                 self._param_baseline["fill.mode"] = self.f_mode.currentText()
+            if self.f_seam.currentText() != self._param_baseline.get("fill.seam_position"):
+                self.cfg.fill.seam_position = self.f_seam.currentText()
+                self._param_baseline["fill.seam_position"] = self.f_seam.currentText()
             # boolean widgets are lossless — write through
             self.cfg.fill.crosshatch = self.f_cross.isChecked()
+            self.cfg.fill.seam_prefer_one_pass = self.adv_seam_onepass.isChecked()
             self.cfg.emit.dry_run = self.adv_dry.isChecked()
 
         def _load_params_from_cfg(self):
@@ -827,7 +845,15 @@ def _build_studio_window():
             if self.f_mode.currentText() != self.cfg.fill.mode:
                 clamped.append(f"fill.mode={self.cfg.fill.mode!r} not in the "
                                "mode selector")
+            self.f_seam.blockSignals(True)
+            self.f_seam.setCurrentText(self.cfg.fill.seam_position)
+            self.f_seam.blockSignals(False)
+            self._param_baseline["fill.seam_position"] = self.f_seam.currentText()
+            if self.f_seam.currentText() != self.cfg.fill.seam_position:
+                clamped.append(f"fill.seam_position={self.cfg.fill.seam_position!r} "
+                               "not in the seam selector")
             self.f_cross.setChecked(self.cfg.fill.crosshatch)
+            self.adv_seam_onepass.setChecked(self.cfg.fill.seam_prefer_one_pass)
             self.adv_dry.setChecked(self.cfg.emit.dry_run)
             if clamped:
                 self._log("WARNING: widget limits clamp config values (the "
