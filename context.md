@@ -1,7 +1,7 @@
 # Rotoforge Slicer — project context & status
 
-*Snapshot: 2026-07-03, branch `feat/slicer-m1-m2`, HEAD `af6bd43`, 204 tests green,
-`dist/RotoforgeSlicer.exe` built 2026-07-02 20:47 and launch-verified.*
+*Snapshot: 2026-07-03, branch `feat/slicer-m1-m2`, HEAD `f34ff10`, 255 tests green,
+`dist/RotoforgeSlicer.exe` (606 MB) rebuilt 2026-07-03 13:03 and launch-verified.*
 
 A living orientation document: where the project is, what has been accomplished,
 the current state, and the agreed next steps. Detailed history lives in
@@ -107,9 +107,9 @@ and rejected; instead we port its subsystems from the user's source zip
 
 | Item | State |
 |---|---|
-| Branch / HEAD | `feat/slicer-m1-m2` @ `af6bd43`, working tree clean |
-| Tests | 204 passing (`pytest -q` via AppData CPython 3.11) |
-| Exe | `dist/RotoforgeSlicer.exe` (638 MB), studio default, `--classic` = old GUI |
+| Branch / HEAD | `feat/slicer-m1-m2` @ `f34ff10`, working tree clean |
+| Tests | 255 passing (`pytest -q` via AppData CPython 3.11) |
+| Exe | `dist/RotoforgeSlicer.exe` (606 MB), studio default, `--classic` = old GUI |
 | Deps | + pyvista 0.48 / pyvistaqt 0.12 (runtime); PyInstaller 6.21 builds it |
 | Config | `config/machine_duet3.yaml`; ω_C=360°/s measured; range ±180° is a **placeholder** |
 
@@ -143,6 +143,7 @@ and rejected; instead we port its subsystems from the user's source zip
 ## 5. Session commit trail (newest first)
 
 ```
+f34ff10  Presets + project save/load: PrusaSlicer PresetBundle/3MF port (port #2)
 af6bd43  Auto-arrange: port of PrusaSlicer's arrange architecture
 6fec75a  Review fixes: plunge-junction proof, <90° step cap, composed crosshatch, ...
 49d1081  PrusaSlicer-style preview + resizable UI
