@@ -134,6 +134,38 @@ def ray_run(rows, nv: float, tol: float = 5.0) -> list[dict]:
     return _widest_contiguous_run(ray)
 
 
+def nearest_stable_cell(rows, *, rpm: Optional[float] = None,
+                        traverse: Optional[float] = None) -> Optional[dict]:
+    """The measured STABLE cell nearest the requested (rpm, traverse) targets —
+    the graphical screener's independent-axis snap (SPEC §5: selections always
+    land on measured cells, never interpolated physics).
+
+    Either target may be omitted (single-axis snap). With both given, each axis
+    is normalized by the stable data's span so RPM's large numbers don't drown
+    the traverse. Ties break toward the lower (traverse, rpm) cell so the snap
+    is deterministic. ``None`` when there are no stable cells."""
+    cells = stable_rows(rows)
+    if not cells:
+        return None
+
+    def axis_span(vals):
+        lo, hi = min(vals), max(vals)
+        return (hi - lo) or 1.0
+
+    rpm_span = axis_span([float(r["rpm"]) for r in cells])
+    trav_span = axis_span([_trav(r) for r in cells])
+
+    def dist(r):
+        d = 0.0
+        if rpm is not None:
+            d += ((float(r["rpm"]) - rpm) / rpm_span) ** 2
+        if traverse is not None:
+            d += ((_trav(r) - traverse) / trav_span) ** 2
+        return d
+
+    return min(cells, key=lambda r: (dist(r), _trav(r), float(r["rpm"])))
+
+
 def widest_ray(rows, tol: float = 5.0) -> Optional[float]:
     """The revs/mm ray with the widest contiguous stable run (what ``auto`` mode
     selects) — the GUI's default highlight. None if no ray has a stable run."""

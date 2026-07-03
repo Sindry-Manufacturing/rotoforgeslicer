@@ -1,11 +1,14 @@
 """Graphical process window: ray helpers, user-chosen cells, the map plot, and
 material profiles (SPEC §5/§9). Everything headless — Qt is exercised only via the
 studio construction test."""
+from pathlib import Path
+
 import pytest
 
 from rotoforge_slicer.config import Config
 from rotoforge_slicer.process.screener import (
-    distinct_rays, load_rows, ray_run, select_operating_point, widest_ray,
+    distinct_rays, load_rows, nearest_stable_cell, ray_run,
+    select_operating_point, widest_ray,
 )
 from rotoforge_slicer.studio.materials import (
     MaterialProfile, hotshoe_macro_name, hotshoe_temp_from_macro,
@@ -75,6 +78,132 @@ def test_plot_screener_map_headless(tmp_path):
     assert ax.get_xlabel().startswith("traverse")
     plot_screener_map(ax, [], selected_nv=None)          # empty-data branch
     assert "no screener" in ax.get_title()
+    plt.close(fig)
+
+
+def test_nearest_stable_cell_independent_axes(tmp_path):
+    """The graphical screener's snap: RPM and traverse are independent targets
+    landing on measured STABLE cells only (never interpolated)."""
+    rows = load_rows(_csv(tmp_path,
+                          _cells(100, [80, 100, 120])          # RPM 8k/10k/12k
+                          + _cells(150, [90, 110])             # RPM 13.5k/16.5k
+                          + _cells(150, [100], ok=False)))     # unstable: excluded
+    # exact hit
+    hit = nearest_stable_cell(rows, rpm=15000, traverse=100)
+    assert float(hit["rpm"]) == 13500.0 and float(hit["traverse_mm_min"]) == 90.0
+    # RPM-only snap ignores traverse entirely
+    assert float(nearest_stable_cell(rows, rpm=16000)["rpm"]) == 16500.0
+    # traverse-only snap
+    assert float(nearest_stable_cell(rows, traverse=121)["traverse_mm_min"]) == 120.0
+    # the unstable cell at (150 ray, v=100) is never selectable
+    near_unstable = nearest_stable_cell(rows, rpm=15000, traverse=100)
+    assert not (float(near_unstable["rpm"]) == 15000.0
+                and float(near_unstable["traverse_mm_min"]) == 100.0)
+    # cells off the previously-selected ray are reachable (independence)
+    other_ray = nearest_stable_cell(rows, rpm=10000, traverse=100)
+    assert float(other_ray["rpm"]) == 10000.0
+    assert nearest_stable_cell([], rpm=1) is None
+
+
+def test_independently_chosen_cell_pins_exactly(tmp_path):
+    """WYSIWYG under independent selection: Apply pins the chosen cell's own
+    revs/mm + traverse, and the pipeline reproduces exactly that cell."""
+    csv = _csv(tmp_path, _cells(100, [80, 100, 120]) + _cells(150, [90, 110]))
+    rows = load_rows(csv)
+    cell = nearest_stable_cell(rows, rpm=13000, traverse=95)
+    nv = float(cell["n_over_v"])
+    op = select_operating_point(csv, mode="manual", target=nv, tol=5.0,
+                                rpm_min=5000, rpm_max=30000,
+                                traverse_target=float(cell["traverse_mm_min"]))
+    assert op.traverse_mm_min == float(cell["traverse_mm_min"])
+    assert op.rpm == int(round(float(cell["rpm"])))
+
+
+def test_plot_axis_stays_at_measured_rpm_scale(tmp_path):
+    """User report: the RPM axis ran to 1e6 — steep constant-revs/mm rays drawn
+    to the traverse limit dragged the autoscale. Axes must stay at the measured
+    data scale (the spindle tops out ~30k), rays clipped to the window."""
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from rotoforge_slicer.studio.screener_plot import plot_screener_map
+
+    # steep ray: nv=300 at v<=100 -> RPM<=30k, but the ray extended to
+    # v_hi=108 * nv... with a shallow ray forcing v_hi high, the old code drew
+    # the steep ray to 300*216 = 64 800+; worse cases hit 1e6
+    rows = load_rows(_csv(tmp_path, _cells(300, [80, 100])     # RPM 24k/30k
+                          + _cells(50, [100, 200])))           # RPM 5k/10k
+    fig, ax = plt.subplots()
+    plot_screener_map(ax, rows, selected_nv=300.0, tol=5.0, chosen_traverse=100.0)
+    max_rpm = 30000.0
+    assert ax.get_ylim()[1] <= max_rpm * 1.2, \
+        f"RPM axis blew up to {ax.get_ylim()[1]:g}"
+    for line in ax.lines:                                      # rays clipped
+        assert max(line.get_ydata()) <= max_rpm * 1.2
+    plt.close(fig)
+
+
+def test_plot_chosen_cell_marker(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from rotoforge_slicer.studio.screener_plot import plot_screener_map
+
+    rows = load_rows(_csv(tmp_path, _cells(150, [90, 100, 110])))
+    cell = nearest_stable_cell(rows, rpm=15000, traverse=100)
+    fig, ax = plt.subplots()
+    plot_screener_map(ax, rows, selected_nv=150.0, tol=5.0, chosen_cell=cell)
+    labels = [c.get_label() for c in ax.collections]
+    assert "operating point" in labels
+    plt.close(fig)
+
+
+REAL_CSV = (Path(__file__).parent / "fixtures" /
+            "fram_rim_jet_process_window_gridAl1100_30KRPM_300CW_60CB.csv")
+
+
+@pytest.mark.skipif(not REAL_CSV.exists(), reason="real screener CSV not present")
+def test_real_fram_export_loads_and_selects_independently():
+    """The user's actual FRAM parameter-screener export (Al1100, 30k RPM grid,
+    ~7400 cells): a rectangular RPM x traverse grid, NOT ray-structured data —
+    the regime the independent selection exists for."""
+    rows = load_rows(str(REAL_CSV))
+    assert len(rows) > 1000
+    cell = nearest_stable_cell(rows, rpm=12000, traverse=100)
+    assert cell is not None and str(cell["pass"]).strip().upper() == "TRUE"
+    # independent axes: asking for a different traverse at the same RPM moves
+    # along the traverse axis without being dragged onto a revs/mm ray
+    other = nearest_stable_cell(rows, rpm=float(cell["rpm"]), traverse=250)
+    assert float(other["rpm"]) == pytest.approx(float(cell["rpm"]), rel=0.2)
+    assert float(other["traverse_mm_min"]) != float(cell["traverse_mm_min"])
+    # WYSIWYG: pinning the chosen cell reproduces exactly that cell
+    op = select_operating_point(str(REAL_CSV), mode="manual",
+                                target=float(cell["n_over_v"]), tol=5.0,
+                                rpm_min=5000, rpm_max=30000,
+                                traverse_target=float(cell["traverse_mm_min"]))
+    assert op.traverse_mm_min == float(cell["traverse_mm_min"])
+
+
+@pytest.mark.skipif(not REAL_CSV.exists(), reason="real screener CSV not present")
+def test_real_fram_export_plot_axis_stays_sane():
+    """User report reproduced with the REAL data: nv reaches ~3000 (30k RPM at
+    v=10), so the old unclipped rays drove the RPM axis toward 1e6. The axis
+    must stay at the measured spindle scale (~30k)."""
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from rotoforge_slicer.studio.screener_plot import plot_screener_map
+
+    rows = load_rows(str(REAL_CSV))
+    max_rpm = max(float(r["rpm"]) for r in rows)
+    fig, ax = plt.subplots()
+    plot_screener_map(ax, rows, selected_nv=None, tol=5.0)
+    assert ax.get_ylim()[1] <= max_rpm * 1.2
+    for line in ax.lines:
+        assert max(line.get_ydata()) <= max_rpm * 1.2
     plt.close(fig)
 
 

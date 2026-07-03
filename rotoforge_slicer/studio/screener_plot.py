@@ -23,14 +23,20 @@ CHOSEN_COLOR = "#e0a000"
 
 def plot_screener_map(ax, rows, *, selected_nv: Optional[float] = None,
                       tol: float = 5.0, chosen_traverse: Optional[float] = None,
-                      rpm_window=None) -> None:
+                      rpm_window=None, chosen_cell: Optional[dict] = None) -> None:
     """Draw the process-window map onto a matplotlib Axes (cleared first).
 
     ``rows``            screener rows (``process.screener.load_rows``).
     ``selected_nv``     highlight this revs/mm ray + its contiguous stable run.
-    ``chosen_traverse`` mark the representative cell nearest this traverse on the
-                        selected ray (the operating point the slicer will use).
+    ``chosen_cell``     mark exactly this cell row as the operating point (the
+                        independent RPM/traverse selection).
+    ``chosen_traverse`` legacy marker: the run cell nearest this traverse on the
+                        selected ray (ignored when ``chosen_cell`` is given).
     ``rpm_window``      optional (rpm_min, rpm_max) SuperPID band, shaded.
+
+    Axes are clamped to the MEASURED data (plus headroom): the constant-revs/mm
+    rays are clipped to the data window, never allowed to drag the RPM axis to
+    absurd heights — the spindle tops out around 30 000 RPM, the axis must too.
     """
     ax.clear()
     if not rows:
@@ -49,9 +55,20 @@ def plot_screener_map(ax, rows, *, selected_nv: Optional[float] = None,
                    label="stable", zorder=4)
 
     v_hi = max(_trav(r) for r in rows) * 1.08
-    for nv in distinct_rays(rows, tol):
+    rpm_hi = max(float(r["rpm"]) for r in rows) * 1.10
+    rays = distinct_rays(rows, tol)
+    if len(rays) > 40:
+        # a real rectangular RPM x traverse grid clusters into hundreds of
+        # near-continuous rays — an underlay of all of them is pure noise;
+        # keep only the selected cell's ray for context
+        rays = [nv for nv in rays
+                if selected_nv is not None and abs(nv - selected_nv) <= tol]
+    for nv in rays:
         sel = selected_nv is not None and abs(nv - selected_nv) <= tol
-        ax.plot([0, v_hi], [0, nv * v_hi],
+        # clip the ray to the data window: a steep ray drawn to v_hi would put
+        # its endpoint at nv*v_hi and blow the RPM autoscale into the millions
+        x_end = min(v_hi, rpm_hi / nv) if nv > 0 else v_hi
+        ax.plot([0, x_end], [0, nv * x_end],
                 color=SELECTED_RAY_COLOR if sel else RAY_COLOR,
                 lw=2.0 if sel else 0.8, alpha=0.9 if sel else 0.5, zorder=2)
 
@@ -62,18 +79,19 @@ def plot_screener_map(ax, rows, *, selected_nv: Optional[float] = None,
             ax.plot(vs, [float(r["rpm"]) for r in run], color=RUN_COLOR, lw=4.0,
                     alpha=0.35, solid_capstyle="round", zorder=5,
                     label="stable window")
-            if chosen_traverse is not None:
-                rep = min(run, key=lambda r: abs(_trav(r) - chosen_traverse))
-                ax.scatter([_trav(rep)], [float(rep["rpm"])], s=140, marker="*",
-                           color=CHOSEN_COLOR, edgecolor="#7a5700", zorder=6,
-                           label="operating point")
+            if chosen_cell is None and chosen_traverse is not None:
+                chosen_cell = min(run, key=lambda r: abs(_trav(r) - chosen_traverse))
+    if chosen_cell is not None:
+        ax.scatter([_trav(chosen_cell)], [float(chosen_cell["rpm"])], s=140,
+                   marker="*", color=CHOSEN_COLOR, edgecolor="#7a5700", zorder=6,
+                   label="operating point")
 
     if rpm_window:
         ax.axhspan(rpm_window[0], rpm_window[1], color="#8888ff", alpha=0.06, zorder=1)
 
     ax.set_xlabel("traverse [mm/min]")
     ax.set_ylabel("spindle RPM")
-    ax.set_xlim(left=0)
-    ax.set_ylim(bottom=0)
+    ax.set_xlim(0, v_hi)
+    ax.set_ylim(0, rpm_hi)
     ax.legend(loc="upper left", fontsize=8)
-    ax.set_title("process window — constant revs/mm rays", fontsize=10)
+    ax.set_title("process window — click a stable cell to select it", fontsize=10)

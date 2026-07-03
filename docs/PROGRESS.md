@@ -15,6 +15,19 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Screener dialog: independent RPM/traverse selection + sane axes (user
+  feedback, validated on a real FRAM export).** The user's real parameter-
+  screener export (Al1100, 30 kRPM grid, ~7 400 cells — now a test fixture) is
+  a rectangular RPM × traverse grid, not ray-structured data: the ray-first
+  selection flow fought it, and unclipped constant-revs/mm rays (nv up to
+  3 000) drove the plot's RPM axis toward 1e6. Now: **RPM and traverse are
+  independent targets** — each snap lands on the nearest measured STABLE cell
+  (`screener.nearest_stable_cell`, axis-normalized; never interpolated
+  physics), or click a cell on the map directly; the implied revs/mm ray +
+  contiguous run stay highlighted for context; Apply pins exactly the
+  displayed cell (WYSIWYG unchanged, verified end-to-end against the real
+  CSV). Axes clamp to the measured data, rays clip to the window, and grid
+  data (> 40 rays) draws only the selected ray. 278 tests green.
 - **Seam placement landed (PrusaSlicer port #3; D14).** `fill.seam_position:
   extreme | nearest | aligned | random` chooses each closed ring's start,
   constrained by the **winding seat window** (`seat_window` — all starts whose

@@ -1,11 +1,12 @@
 """The graphical process-window (screener) dialog. SPEC §5/§9.
 
 Lets the user *see* the FRAM screener map (``screener_plot``) and choose the
-operating window instead of typing revs/mm numbers: pick a constant-revs/mm ray,
-slide along its contiguous stable run to choose the representative cell (the
-traverse/RPM pair — selections always snap to measured cells, SPEC §5), set the
-bed and hotshoe temperature targets, and save/apply the whole selection as a named
-per-material profile (``materials``).
+operating cell the way the parameter screener works: **RPM and traverse are
+selected independently** — type either target (each snaps to the nearest
+measured STABLE cell, never interpolated physics, SPEC §5) or click a cell on
+the map. The implied constant-revs/mm ray and its contiguous stable run are
+highlighted for context. Bed and hotshoe temperature targets ride along, and
+the whole selection saves/loads as a named per-material profile (``materials``).
 
 Applying writes ``cfg.screener`` (mode/target/traverse_target) and the thermal
 targets; the normal pipeline then selects exactly that cell on the next slice.
@@ -16,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..process.screener import (
-    _trav, distinct_rays, load_rows, ray_run, widest_ray,
+    _nv, _trav, load_rows, nearest_stable_cell, ray_run, widest_ray,
 )
 from .materials import (
     MaterialProfile, hotshoe_macro_name, hotshoe_temp_from_macro,
@@ -41,7 +42,7 @@ def profiles_path() -> Path:
 def open_screener_dialog(win) -> None:
     """Build and exec the process-window dialog against the studio main window
     (reads ``win.csv_path`` / ``win.cfg``, writes the selection back on Apply)."""
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtWidgets
 
     from ..gui.preview import make_preview_canvas
     from .screener_plot import plot_screener_map
@@ -62,7 +63,7 @@ def open_screener_dialog(win) -> None:
 
     # ALL selection state is dialog-local until "Apply to slicer" — browsing a CSV
     # or a material profile must not touch the live config / main-window CSV.
-    state = {"rows": [], "run": [], "csv": win.csv_path}
+    state = {"rows": [], "cell": None, "csv": win.csv_path}
     tol = win.cfg.screener.revs_per_mm_tol
 
     csv_lbl = QtWidgets.QLabel("no CSV loaded")
@@ -71,21 +72,27 @@ def open_screener_dialog(win) -> None:
     side.addWidget(btn_csv)
     side.addWidget(csv_lbl)
 
-    ray_box = QtWidgets.QComboBox()          # "auto" + one entry per stable ray
-    side.addWidget(QtWidgets.QLabel("revs/mm ray (stability window)"))
-    side.addWidget(ray_box)
-
-    v_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-    v_lbl = QtWidgets.QLabel("—")
-    side.addWidget(QtWidgets.QLabel("operating cell on the ray"))
-    side.addWidget(v_slider)
-    side.addWidget(v_lbl)
-
+    # RPM and traverse are INDEPENDENT targets (like the parameter screener);
+    # each edit snaps the selection to the nearest measured stable cell, and
+    # clicking the map picks a cell directly.
+    hint = QtWidgets.QLabel("operating cell — set RPM and traverse\n"
+                            "independently, or click a cell on the map\n"
+                            "(always snaps to a measured stable cell)")
+    side.addWidget(hint)
     rpm_spin = QtWidgets.QSpinBox()
-    rpm_spin.setRange(win.cfg.spindle.rpm_min, win.cfg.spindle.rpm_max)
+    rpm_spin.setRange(0, win.cfg.spindle.rpm_max)
     rpm_spin.setSingleStep(500)
-    side.addWidget(QtWidgets.QLabel("spindle RPM target (snaps to a cell)"))
-    side.addWidget(rpm_spin)
+    trav_spin = QtWidgets.QDoubleSpinBox()
+    trav_spin.setRange(0.0, 10000.0)
+    trav_spin.setSingleStep(5.0)
+    trav_spin.setDecimals(1)
+    tgt_form = QtWidgets.QFormLayout()
+    tgt_form.addRow("Spindle RPM", rpm_spin)
+    tgt_form.addRow("Traverse (mm/min)", trav_spin)
+    side.addLayout(tgt_form)
+    cell_lbl = QtWidgets.QLabel("—")
+    cell_lbl.setWordWrap(True)
+    side.addWidget(cell_lbl)
 
     bed_spin = QtWidgets.QDoubleSpinBox()
     bed_spin.setRange(0, 200)
@@ -116,54 +123,52 @@ def open_screener_dialog(win) -> None:
     # ---- behaviour ----
 
     def selected_nv():
-        i = ray_box.currentIndex()
-        if i <= 0:
-            return widest_ray(state["rows"], tol)
-        return float(ray_box.itemData(i))
+        cell = state["cell"]
+        return _nv(cell) if cell else None
 
     def chosen_cell():
-        run = state["run"]
-        if not run:
-            return None
-        return run[max(0, min(v_slider.value(), len(run) - 1))]
+        return state["cell"]
 
     def replot():
-        cell = chosen_cell()
+        cell = state["cell"]
         plot_screener_map(
             ax, state["rows"], selected_nv=selected_nv(), tol=tol,
-            chosen_traverse=_trav(cell) if cell else None,
+            chosen_cell=cell,
             rpm_window=(win.cfg.spindle.rpm_min, win.cfg.spindle.rpm_max))
         canvas.draw_idle()
 
-    def refresh_run():
-        nv = selected_nv()
-        state["run"] = ray_run(state["rows"], nv, tol) if nv is not None else []
-        v_slider.blockSignals(True)
-        v_slider.setRange(0, max(0, len(state["run"]) - 1))
-        v_slider.setValue(len(state["run"]) // 2)
-        v_slider.blockSignals(False)
-        on_cell_changed()
-
-    def on_cell_changed(*_):
-        cell = chosen_cell()
+    def select_cell(cell):
+        """Make ``cell`` (a measured stable row, or None) the displayed
+        selection: spins, readout, and map all show exactly this cell."""
+        state["cell"] = cell
         if cell:
             rpm = int(round(float(cell["rpm"])))
-            v_lbl.setText(f"v = {_trav(cell):g} mm/min   RPM = {rpm}   "
-                          f"wire = {float(cell['feed_speed_mm_min']):g} mm/min   "
-                          f"T_AZ = {float(cell['T_AZ_C']):g} °C")
             rpm_spin.blockSignals(True)
             rpm_spin.setValue(rpm)
             rpm_spin.blockSignals(False)
+            trav_spin.blockSignals(True)
+            trav_spin.setValue(_trav(cell))
+            trav_spin.blockSignals(False)
+            cell_lbl.setText(f"v = {_trav(cell):g} mm/min   RPM = {rpm}   "
+                             f"revs/mm = {_nv(cell):g}   "
+                             f"wire = {float(cell['feed_speed_mm_min']):g} mm/min   "
+                             f"T_AZ = {float(cell['T_AZ_C']):g} °C")
         else:
-            v_lbl.setText("no contiguous stable run on this ray")
+            cell_lbl.setText("no stable cells in this CSV")
         replot()
 
-    def on_rpm_edited():
-        run = state["run"]
-        if run:
-            i = min(range(len(run)),
-                    key=lambda j: abs(float(run[j]["rpm"]) - rpm_spin.value()))
-            v_slider.setValue(i)                 # snaps to the nearest measured cell
+    def on_target_edited():
+        # each spin is an independent request; the selection lands on the
+        # measured stable cell nearest the (RPM, traverse) pair
+        if state["rows"]:
+            select_cell(nearest_stable_cell(state["rows"], rpm=rpm_spin.value(),
+                                            traverse=trav_spin.value()))
+
+    def on_map_click(event):
+        if event.inaxes is not ax or event.xdata is None or not state["rows"]:
+            return
+        select_cell(nearest_stable_cell(state["rows"], rpm=event.ydata,
+                                        traverse=event.xdata))
 
     def load_csv(path=None):
         """Load a CSV into the DIALOG only; the main window's CSV changes on Apply."""
@@ -179,20 +184,23 @@ def open_screener_dialog(win) -> None:
             return
         state["csv"] = path
         csv_lbl.setText(Path(path).name)
-        ray_box.blockSignals(True)
-        ray_box.clear()
-        ray_box.addItem("auto (widest stable window)", None)
-        for nv in distinct_rays(state["rows"], tol):
-            ray_box.addItem(f"revs/mm = {nv:g}", nv)
-        ray_box.blockSignals(False)
-        refresh_run()
+        travs = [_trav(r) for r in state["rows"]]
+        trav_spin.blockSignals(True)
+        trav_spin.setRange(0.0, (max(travs) * 1.5) if travs else 10000.0)
+        trav_spin.blockSignals(False)
+        # initial suggestion = what auto mode would pick (the widest contiguous
+        # stable run's midpoint); the user adjusts RPM/traverse freely from there
+        nv = widest_ray(state["rows"], tol)
+        run = ray_run(state["rows"], nv, tol) if nv is not None else []
+        select_cell(run[len(run) // 2] if run
+                    else nearest_stable_cell(state["rows"]))
 
     def apply_to_cfg():
         """The single commit point: what the map DISPLAYS is what the slicer runs.
 
-        Even with 'auto' selected in the combo, the ray is PINNED as a manual
-        target — the pipeline's auto search walks candidates differently than the
-        dialog's highlight and could pick another ray, silently running at a
+        The displayed cell is PINNED as a manual target (its own revs/mm +
+        traverse) — the pipeline's auto search walks candidates differently
+        than the dialog and could pick another cell, silently running at a
         different RPM/feed than displayed. WYSIWYG or nothing."""
         cell = chosen_cell()
         nv = selected_nv()
@@ -216,12 +224,14 @@ def open_screener_dialog(win) -> None:
             win.csv_path = state["csv"]
             win._csv_provenance = win.cfg.screener.csv_path
             win.csv_lbl.setText(Path(state["csv"]).name)
-        win._log(
-            f"process window applied: "
-            f"{f'ray {nv:g} revs/mm (pinned)' if nv is not None else 'auto'}"
-            f"{f', v={_trav(cell):g} mm/min' if cell else ''}, "
-            f"bed {bed_spin.value():g} °C, "
-            f"hotshoe {hot_spin.value():g} °C ({win.cfg.process.hotshoe_macro})")
+        if cell:
+            picked = (f"cell RPM={int(round(float(cell['rpm'])))}, "
+                      f"v={_trav(cell):g} mm/min ({nv:g} revs/mm, pinned)")
+        else:
+            picked = "auto (no screener data)"
+        win._log(f"process window applied: {picked}, "
+                 f"bed {bed_spin.value():g} °C, "
+                 f"hotshoe {hot_spin.value():g} °C ({win.cfg.process.hotshoe_macro})")
 
     def save_profile():
         name = mat_name.text().strip()
@@ -268,23 +278,21 @@ def open_screener_dialog(win) -> None:
                      f"({prof.csv_path or 'none'}); only temps loaded")
             return
         load_csv(prof.csv_path)
-        if prof.revs_per_mm > 0:                # reselect the profile's ray + cell
-            for i in range(1, ray_box.count()):
-                if abs(float(ray_box.itemData(i)) - prof.revs_per_mm) <= tol:
-                    ray_box.setCurrentIndex(i)
-                    break
-            run = state["run"]
-            if run and prof.traverse_mm_min > 0:
-                j = min(range(len(run)), key=lambda k: abs(
-                    _trav(run[k]) - prof.traverse_mm_min))
-                v_slider.setValue(j)
+        if state["rows"] and (prof.revs_per_mm > 0 or prof.traverse_mm_min > 0):
+            # reselect the profile's cell: rpm = revs/mm x traverse when both
+            # are recorded; either target alone still snaps on its own axis
+            rpm = (prof.revs_per_mm * prof.traverse_mm_min
+                   if prof.revs_per_mm > 0 and prof.traverse_mm_min > 0 else None)
+            select_cell(nearest_stable_cell(
+                state["rows"], rpm=rpm,
+                traverse=prof.traverse_mm_min if prof.traverse_mm_min > 0 else None))
         win._log(f"material profile loaded into the dialog: {prof.name} "
                  "(Apply to commit)")
 
     btn_csv.clicked.connect(lambda: load_csv())
-    ray_box.currentIndexChanged.connect(lambda *_: refresh_run())
-    v_slider.valueChanged.connect(on_cell_changed)
-    rpm_spin.editingFinished.connect(on_rpm_edited)
+    rpm_spin.editingFinished.connect(on_target_edited)
+    trav_spin.editingFinished.connect(on_target_edited)
+    canvas.mpl_connect("button_press_event", on_map_click)
     btn_save.clicked.connect(save_profile)
     mat_box.activated.connect(on_material)
     btn_apply.clicked.connect(apply_to_cfg)
