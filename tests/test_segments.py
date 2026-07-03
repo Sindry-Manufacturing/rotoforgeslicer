@@ -139,6 +139,45 @@ def test_deposition_a_matches_validated_axis_angles():
     assert dep_a and all(a in validated for a in dep_a)
 
 
+def test_plunge_split_snaps_multi_segment_plunges_to_a_vertex():
+    # review fix (hardware): a mid-segment plunge split that SPANS vertices leaves
+    # an arbitrarily short in-contact remainder across which the firmware must
+    # interpolate the chord->segment A step. Within one segment the chord equals
+    # the heading (safe, keep mid-split); across vertices, snap to the nearest one.
+    from rotoforge_slicer.toolpath.segments import plunge_split
+
+    straight = [(0.0, 0.0), (0.0, 30.0)]
+    pp, dep, seg0, plunge = plunge_split(straight, 2.0)
+    assert plunge == pytest.approx(2.0) and seg0 == 0        # mid-split, one segment
+    assert pp == pytest.approx((0.0, 2.0))
+
+    fine = [(0.0, 0.0), (0.5, 0.0), (1.0, 0.1), (1.5, 0.25), (2.0, 0.5),
+            (2.5, 0.9), (3.0, 1.4), (4.0, 2.6), (5.0, 4.0)]
+    pp, dep, seg0, plunge = plunge_split(fine, 2.0)
+    assert pp in fine                                        # landed ON a vertex
+    assert dep[0] == pp and fine[seg0] == pp
+    assert abs(plunge - 2.0) < 1.0                           # near the target
+
+
+def test_curved_lead_in_junction_is_emitted_safely():
+    # the review's repro: a legal 2mm-radius curved lead-in used to emit an A step
+    # over a ~0.1mm in-contact remainder (axis-infeasible). With vertex snapping +
+    # emit-time junction validation it must emit cleanly.
+    import math
+
+    cfg = Config()
+    cfg.c_axis.max_speed_deg_s = 360.0
+    pts = [(190 + 2 * math.sin(t), 100 + 2 * (1 - math.cos(t)))
+           for t in [i * 0.15 for i in range(20)]]           # r=2mm arc, ~0.3mm steps
+    from rotoforge_slicer.toolpath.passplan import Pass
+
+    p = Pass.curved(pts, z=0.06, rpm=5000, traverse_mm_min=120.0,
+                    e_per_path_mm=1.0, c_axis=cfg.c_axis)
+    plan = _plan([LayerPlan(0, 0.06, [p])])
+    g = GCodeEmitter(cfg).emit(plan)                         # must not raise
+    assert "M84" in g
+
+
 def test_segments_carry_layer_index_for_the_scrubber():
     plan = _plan([
         LayerPlan(0, 0.06, [_straight_pass(190)]),

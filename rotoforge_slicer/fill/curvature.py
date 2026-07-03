@@ -72,8 +72,14 @@ def vertex_step_ok(step_deg: float, l_next_mm: float, v_mm_s: float,
       though the circumradius proxy — which scales with leg length — reads it as
       a gentle turn.
 
-    ``budget_deg_mm <= 0`` disables the scrub bound (legacy behavior).
+    ``budget_deg_mm <= 0`` disables the scrub bound (legacy behavior). A third,
+    UNCONDITIONAL bound: the step must stay below 90° — past a quarter turn the
+    wheel is more sideways than forward while interpolating (a skid, however short
+    the segment), so a ≥90° in-contact vertex is never acceptable regardless of
+    budget or slew rate.
     """
+    if step_deg >= 90.0 - 1e-9:
+        return False
     if omega_max_deg_s > 0 and v_mm_s > 0 and \
             step_deg > omega_max_deg_s * l_next_mm / v_mm_s + 1e-9:
         return False

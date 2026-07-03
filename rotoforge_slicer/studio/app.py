@@ -771,12 +771,19 @@ def _build_studio_window():
             preview_mode = index == 1 and self.preview is not None
             self.layer_range.setVisible(preview_mode)
             self.move_row.setVisible(preview_mode)
+            if self._drag:                        # abandon a mid-gesture drag: the
+                d, self._drag = self._drag, None  # grabbed part may be hidden now
+                actor = self.view._part_actors.get(id(d["part"]))
+                if actor is not None:
+                    actor.SetPosition(0.0, 0.0, 0.0)
+                self._camera_style_enabled(True)
             if preview_mode:
                 self.view.set_parts_display(
                     "ghost" if self.shells_cb.isChecked() else "hidden")
                 self._refresh_toolpath()
             else:
-                self.view.set_parts_display("normal")
+                self._set_playing(False)          # the timer would resurrect the
+                self.view.set_parts_display("normal")  # head actors it just cleared
                 self.view.clear_toolpath()
                 self.view.clear_head()
             self.interactor.update()
@@ -842,8 +849,8 @@ def _build_studio_window():
                 self._update_sim_display(scrubbed=True)
 
         def _update_sim_display(self, scrubbed: bool = False):
-            if not self.timeline:
-                return
+            if not self.timeline or self.tabs.currentIndex() != 1:
+                return                            # the head belongs to Preview only
             cfg = self.preview.cfg if self.preview else self.cfg
             state = state_at(self.timeline, self.sim_t, cfg.c_axis)
             self.view.update_head(state, cfg)

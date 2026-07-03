@@ -343,10 +343,13 @@ def _curved_passes(paths, layer_z, cfg: Config, op: OperatingPoint,
     v_s = op.traverse_mm_min / 60.0
     out: List[Pass] = []
     for path in paths:
-        for sub_s in split_on_heading_step(path, v_s, cfg.c_axis.max_speed_deg_s,
-                                           cfg.c_axis.max_scrub_deg_mm):
-            for sub_r in split_unreachable(sub_s, cfg.c_axis):
-                for sub_c in split_on_curvature(sub_r, v_s, cfg.c_axis.max_speed_deg_s):
+        # reachability (with its possible arc REVERSALS) must run before the
+        # heading-step check: reversing a sub-path swaps which leg is "next" at
+        # every interior vertex, which would invalidate an earlier step pass
+        for sub_r in split_unreachable(path, cfg.c_axis):
+            for sub_s in split_on_heading_step(sub_r, v_s, cfg.c_axis.max_speed_deg_s,
+                                               cfg.c_axis.max_scrub_deg_mm):
+                for sub_c in split_on_curvature(sub_s, v_s, cfg.c_axis.max_speed_deg_s):
                     for sub in split_on_winding(sub_c, cfg.c_axis):
                         if _polyline_len(sub) >= min_len:
                             out.append(Pass.curved(
@@ -400,18 +403,22 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
 
         # Per-region heading (D13: no privileged direction — the choice is free):
         # * raster: SCORE candidate directions on the actual clipped hatch and take
-        #   the winner (most kept bead, then fewest pieces); legacy +Y is always a
+        #   the winner (most kept bead, then fewest pieces among near-equals); the
+        #   crosshatch delta is COMPOSED INTO the scored candidates, so the scored
+        #   heading is exactly the laid heading; legacy +Y(+delta) is always a
         #   candidate, so coverage never regresses.
-        # * streamline: bias along the region's LONG AXIS — the guidance field
-        #   bends toward boundaries, so aligning the bias with the dominant axis
-        #   complements the curl (measured on real bracket geometry: about a third
-        #   fewer passes and much less overlap at equal coverage; a straight-hatch
+        # * streamline: bias along the region's LONG AXIS (+delta) — the guidance
+        #   field bends toward boundaries, so aligning the bias with the dominant
+        #   axis complements the curl (measured on real bracket geometry: about a
+        #   third fewer passes, much less overlap, equal coverage; a straight-hatch
         #   score is a poor proxy for a boundary-following field).
-        # The layer's crosshatch delta applies on top of the auto choice.
+        delta = heading_deg - 90.0
         if cfg.fill.auto_heading:
-            base = (dominant_heading_deg(infill_region) if mode == "streamline"
-                    else best_heading_deg(infill_region, cfg, min_len))
-            region_heading = (base + (heading_deg - 90.0)) % 360.0
+            if mode == "streamline":
+                region_heading = (dominant_heading_deg(infill_region) + delta) % 360.0
+            else:
+                region_heading = best_heading_deg(infill_region, cfg, min_len,
+                                                  delta_deg=delta)
         else:
             region_heading = heading_deg
 
@@ -428,11 +435,21 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
             for start, end in raster_lines(infill_region, pitch,
                                            heading_deg=region_heading, min_len=min_len,
                                            bidirectional=cfg.fill.raster_bidirectional):
-                passes.append(Pass(
-                    start=start, end=end, z=layer.z,
-                    a_deg=heading_to_a_deg(
+                # Reachability on a calibrated sub-360° axis range (D13): a line
+                # whose heading no winding can reach deposits in REVERSE (its
+                # +180° heading is reachable whenever the range is ≥180° wide);
+                # unreachable both ways fails loud inside split_unreachable.
+                a = heading_to_a_deg(
+                    heading_deg_from_vector(end[0] - start[0], end[1] - start[1]),
+                    cfg.c_axis)
+                if not _reachable(a, cfg.c_axis.a_min_deg, cfg.c_axis.a_max_deg):
+                    (sub,) = split_unreachable([start, end], cfg.c_axis)
+                    start, end = sub[0], sub[1]
+                    a = heading_to_a_deg(
                         heading_deg_from_vector(end[0] - start[0], end[1] - start[1]),
-                        cfg.c_axis),
+                        cfg.c_axis)
+                passes.append(Pass(
+                    start=start, end=end, z=layer.z, a_deg=a,
                     rpm=op.rpm, traverse_mm_min=op.traverse_mm_min,
                     e_per_path_mm=e_per_path))
             # raster_lines already returns lines left-to-right; bidirectional

@@ -192,8 +192,12 @@ def test_sharp_corners_split_into_airborne_reorients():
     square_ring = [(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)]
     subs = split_on_heading_step(square_ring, v_s, omega, budget)
     assert len(subs) == 4                                      # one pass per side
-    # disabled budget + generous slew: corners survive (legacy behavior)
-    assert split_on_heading_step(square_ring, v_s, 0.0, 0.0) == [square_ring]
+    # the <90 deg forward-dominance cap is UNCONDITIONAL: square corners split
+    # even with the budget and slew bounds disabled...
+    assert len(split_on_heading_step(square_ring, v_s, 0.0, 0.0)) == 4
+    # ...while a sub-cap corner survives with everything disabled (legacy)
+    hexish = [(0, 0), (20, 0), (37.3, 10), (37.3, 30)]         # 30/60-deg turns
+    assert split_on_heading_step(hexish, v_s, 0.0, 0.0) == [hexish]
 
     # sampling-density honesty: 30 deg over a 0.5 mm next segment (dense legal
     # curve) is fine; the SAME step into a 20 mm leg (a real corner) is not.
@@ -201,6 +205,10 @@ def test_sharp_corners_split_into_airborne_reorients():
     assert not vertex_step_ok(30.0, 20.0, v_s, omega, budget)
     # feasibility: the axis cannot turn 120 deg within a 0.5 mm segment at 2 mm/s
     assert not vertex_step_ok(120.0, 0.5, v_s, omega, budget)
+    # forward-dominance cap: near-reversals are a skid however short the leg —
+    # review fix: 179 deg over ~1 mm slipped the pure product bound (188 < 200)
+    assert not vertex_step_ok(179.0, 1.05, v_s, omega, 200.0)
+    assert not vertex_step_ok(95.0, 0.1, v_s, 0.0, 0.0)        # cap needs no knobs
 
     cfg = _cfg(mode="outline")
     lp = plan_layer(Layer(0, 0.06, [_square(half=10.0)]), cfg,

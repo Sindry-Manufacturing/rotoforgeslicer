@@ -101,6 +101,11 @@ def make_layer_range_slider(parent=None):
             if min(d_lo, d_hi) > self.HANDLE_H * 1.5 \
                     and self._v2y(self._hi) < y < self._v2y(self._lo):
                 self._drag = ("window", self._y2v(y))          # slide the window
+            elif self._lo == self._hi:
+                # coincident handles: pick by drag direction — pressing above the
+                # handle grabs "hi" (can move up), below grabs "lo" (can move
+                # down); always classifying as "lo" would deadlock at the bottom.
+                self._drag = "hi" if y <= self._v2y(self._hi) else "lo"
             else:
                 self._drag = "lo" if d_lo <= d_hi else "hi"
             self.mouseMoveEvent(ev)

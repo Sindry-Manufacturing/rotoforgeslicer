@@ -68,6 +68,43 @@ def test_thin_rib_fills_lengthwise_with_few_long_passes():
     assert lp_legacy.passes == []                             # 3mm crossings all drop
 
 
+def test_crosshatch_scores_the_laid_heading_and_never_zeroes_a_rib():
+    # review fix: the crosshatch delta used to be applied AFTER scoring, so the
+    # measured heading was never the laid heading — a rib with crosshatch on
+    # deposited NOTHING. Now candidates are composed before scoring, and a region
+    # that cannot fill at any tilted heading falls back to its un-tilted best
+    # (coverage beats crosshatch).
+    cfg = Config()
+    cfg.fill.crosshatch = True                               # theta = 30 deg
+    layer = Layer(0, 0.06, [_rib(0.0, length=40.0, width=2.9)])
+    from rotoforge_slicer.toolpath.passplan import layer_heading_deg
+
+    for idx in (0, 1):                                       # both layer parities
+        lp = plan_layer(layer, cfg, operating_point=_op(), e_per_path=1.0,
+                        heading_deg=layer_heading_deg(cfg, idx))
+        assert lp.passes, f"layer parity {idx} deposited nothing"
+        assert sum(p.length_mm for p in lp.passes) > 100.0   # lengthwise fill
+
+
+def test_raster_line_reverses_when_heading_unreachable_on_sub_360_range():
+    # review fix: straight raster passes had no reachability handling — a heading
+    # outside a calibrated sub-360 range crashed at emit. It now deposits in
+    # reverse (D13: no privileged direction).
+    from rotoforge_slicer.emit.rrf import GCodeEmitter
+    from rotoforge_slicer.toolpath.passplan import ToolpathPlan
+
+    cfg = Config()
+    cfg.c_axis.a_min_deg, cfg.c_axis.a_max_deg = -170.0, 170.0
+    layer = Layer(0, 0.06, [_rib(85.0, length=40.0, width=3.0)])  # near-vertical rib
+    lp = plan_layer(layer, cfg, operating_point=_op(), e_per_path=1.0)
+    assert lp.passes
+    for p in lp.passes:                                      # every A reachable
+        for a in p.axis_angles(cfg.c_axis):
+            assert cfg.c_axis.a_min_deg - 1e-3 <= a <= cfg.c_axis.a_max_deg + 1e-3
+    g = GCodeEmitter(cfg).emit(ToolpathPlan([lp], 5000, 120.0, 120.0))
+    assert "M84" in g
+
+
 def test_streamline_auto_heading_biases_along_the_rib():
     pytest.importorskip("scipy")
     cfg = Config()

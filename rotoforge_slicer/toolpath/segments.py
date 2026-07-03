@@ -119,6 +119,39 @@ def split_polyline(pts, dist: float):
     return pts[-1], [pts[-1]], len(pts) - 2
 
 
+def plunge_split(pts, target_mm: float):
+    """Split a pass polyline for the moving plunge: (pp, deposit_pts, seg0,
+    plunge_len).
+
+    A mid-segment split is only safe while the plunge stays WITHIN the first
+    segment (the chord then equals the segment heading — no new heading vertex).
+    When the target spans original vertices, snap to the interior vertex nearest
+    the target (capped at half the path): the emitter-made junction then lands on
+    validated geometry and the following in-contact segment keeps its full length
+    — a mid-segment split there would leave an arbitrarily short remainder across
+    which the firmware must interpolate the chord→segment A step (an unvalidated,
+    possibly axis-infeasible in-contact turn).
+    """
+    if len(pts) >= 2:
+        first_seg = math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
+        if target_mm <= first_seg + 1e-9 or len(pts) == 2:
+            pp, deposit_pts, seg0 = split_polyline(pts, target_mm)
+            return pp, deposit_pts, seg0, min(target_mm, first_seg)
+    cum = [0.0]
+    for a, b in zip(pts, pts[1:]):
+        cum.append(cum[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+    half = 0.5 * cum[-1]
+    best = None
+    for i in range(1, len(pts) - 1):
+        if cum[i] <= half + 1e-9 and (
+                best is None or abs(cum[i] - target_mm) < abs(cum[best] - target_mm)):
+            best = i
+    if best is None:                              # no usable interior vertex
+        pp, deposit_pts, seg0 = split_polyline(pts, target_mm)
+        return pp, deposit_pts, seg0, target_mm
+    return pts[best], list(pts[best:]), best, cum[best]
+
+
 def unit_vec(p0, p1):
     dx, dy = p1[0] - p0[0], p1[1] - p0[1]
     n = math.hypot(dx, dy)
@@ -189,8 +222,8 @@ def build_segments(plan, cfg: Config) -> List[ToolpathSegment]:
             add(SegmentKind.RESET, x, y, approach_z, layer=ly.index, pi=pi)
             cur_z = approach_z
             # 4. moving plunge onto the surface (transition-in), descending to layer Z
-            plunge = min(lead_in, 0.5 * p.length_mm)
-            pp, deposit_pts, seg0 = split_polyline(pts, plunge)
+            pp, deposit_pts, seg0, plunge = plunge_split(
+                pts, min(lead_in, 0.5 * p.length_mm))
             a_pl = (continuity_adjust(seg_a(start, pp, c_axis), a_start)
                     if plunge > 1e-9 else a_start)
             add(SegmentKind.LEAD_IN, pp[0], pp[1], ly.z, layer=ly.index, pi=pi, a=a_pl)

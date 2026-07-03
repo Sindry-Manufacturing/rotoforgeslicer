@@ -15,6 +15,24 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Adversarial review of auto-heading/preview — 10 findings fixed.** The big one
+  (hardware): the emitter's plunge split creates a chord→segment A junction the
+  validators never saw; when the split landed mid-segment past original vertices,
+  the firmware would interpolate the step across an arbitrarily short in-contact
+  remainder — axis-infeasible, XY dragged below the grind floor. `plunge_split`
+  now snaps multi-segment plunges to an original vertex (mid-segment splits stay
+  only within the first segment, where chord == heading) and the emitter validates
+  both junction steps. Also: `vertex_step_ok` gains an unconditional <90°
+  forward-dominance cap (179°-over-1mm "skids" passed the pure product bound);
+  reachability reversal now runs BEFORE the step check (reversal swaps which leg
+  is "next"); straight raster lines reverse when their heading is unreachable on a
+  calibrated sub-360° range; the crosshatch delta is composed INTO the scored
+  heading candidates (scored == laid; a rib that can't fill at any tilted heading
+  falls back to un-tilted — coverage beats crosshatch); heading scoring prefers
+  fewest pieces among candidates within 5% coverage (kept-length is quantization
+  noise between viable directions); switching to Prepare stops playback and
+  abandons mid-gesture drags; the layer-range slider no longer deadlocks with
+  coincident handles. 198 tests green.
 - **Over-segmentation fixed with real-part data (user's Y-axis bracket gcode+STL).**
   Diagnosis: (1) the fixed +Y hatch/bias chops regions that don't align with +Y —
   thin ribs became rib-width crossings (their gcode: 14 286 passes, p50 13 mm, and

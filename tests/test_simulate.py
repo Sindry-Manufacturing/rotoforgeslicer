@@ -159,7 +159,12 @@ def test_curved_pass_e_uses_the_plunge_arc_not_the_chord():
     plan = ToolpathPlan([LayerPlan(0, 0.06, [p])], 5000, 120.0, 120.0)
     tl = build_timeline(build_segments(plan, cfg), plan, cfg)
     lead_in = next(e for e in tl if e.kind == "lead_in")
-    plunge_arc = min(cfg.process.lead_in_len_mm, 0.5 * p.length_mm)
+    # the emitter's plunge_split is the single source of truth for the plunge arc
+    # (it may snap a multi-segment plunge to an original vertex)
+    from rotoforge_slicer.toolpath.segments import plunge_split
+
+    _, _, _, plunge_arc = plunge_split(
+        [tuple(q) for q in p.points], min(cfg.process.lead_in_len_mm, 0.5 * p.length_mm))
     assert lead_in.e1 - lead_in.e0 == pytest.approx(plunge_arc * 1.0)   # arc, not chord
     assert tl[-1].e1 == pytest.approx(p.e_total_mm)                     # exact total
 

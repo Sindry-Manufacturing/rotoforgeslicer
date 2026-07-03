@@ -33,28 +33,40 @@ def dominant_heading_deg(region) -> float:
     return best_deg
 
 
-def best_heading_deg(region, cfg, min_len: float) -> float:
-    """The hatch heading that fills this region best, chosen by SCORING candidate
-    directions — the region's long axis, its perpendicular, +Y, and +X — on the
-    actual clipped hatch: most kept bead length first (coverage), fewest pieces
-    second (fragmentation). Under D13 every heading deposits identically, so the
-    choice is free; measuring beats guessing — a blind long-axis pick loses to +Y
-    on multi-directional webs, and +Y loses badly on off-axis ribs. The legacy +Y
-    is always a candidate, so scoring never does worse than the old behavior."""
+def best_heading_deg(region, cfg, min_len: float, delta_deg: float = 0.0) -> float:
+    """The LAID hatch heading that fills this region best, chosen by SCORING
+    candidate directions — the region's long axis, its perpendicular, +Y, and +X,
+    each COMPOSED with ``delta_deg`` (the layer's crosshatch offset) so the scored
+    heading is exactly the heading that will be laid. Under D13 every heading
+    deposits identically, so the choice is free; measuring beats guessing.
+
+    Scoring: keep the most bead (coverage), and among candidates within 5% of the
+    best coverage prefer the FEWEST pieces — total hatch length is ~area/pitch in
+    any direction, so raw kept-length differences between viable candidates are
+    mostly boundary quantization noise, while the piece count is the real
+    fragmentation signal. Legacy +Y (+delta) is always a candidate."""
     pitch = raster_pitch(cfg)
     dom = dominant_heading_deg(region)
     candidates = []
     for h in (dom, (dom + 90.0) % 180.0, 90.0, 0.0):
+        h = (h + delta_deg) % 360.0
         if not any(abs((h - c + 90.0) % 180.0 - 90.0) < 2.0 for c in candidates):
             candidates.append(h)
-    best_h, best_score = 90.0, None
+    scored = []
     for h in candidates:
         segs = raster_lines(region, pitch, heading_deg=h, min_len=min_len)
         kept = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in segs)
-        score = (round(kept, 3), -len(segs))
-        if best_score is None or score > best_score:
-            best_h, best_score = h, score
-    return best_h
+        scored.append((h, kept, len(segs)))
+    best_kept = max(kept for _, kept, _ in scored)
+    if best_kept <= 0:
+        if delta_deg:
+            # a region that cannot fill at ANY crosshatch-tilted heading (e.g. a
+            # rib narrower than min_len at ±30°) keeps its un-tilted best instead
+            # of silently depositing nothing — coverage beats crosshatch.
+            return best_heading_deg(region, cfg, min_len, delta_deg=0.0)
+        return 90.0
+    viable = [(h, kept, n) for h, kept, n in scored if kept >= 0.95 * best_kept]
+    return min(viable, key=lambda t: (t[2], -t[1]))[0]
 
 
 def raster_pitch(cfg) -> float:

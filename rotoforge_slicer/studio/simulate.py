@@ -93,8 +93,14 @@ def _xy_len(seg: ToolpathSegment) -> float:
 
 
 def _plunge_arc_mm(pass_, cfg: Config) -> float:
-    """The lead-in's arc length ALONG the pass polyline (emit/rrf.py step 4)."""
-    return min(cfg.process.lead_in_len_mm, 0.5 * pass_.length_mm)
+    """The lead-in's arc length ALONG the pass polyline — exactly what the emitter
+    feeds/compensates over (its ``plunge_split`` may snap a multi-segment plunge to
+    an original vertex, shortening the nominal lead-in)."""
+    from ..toolpath.segments import plunge_split
+
+    target = min(cfg.process.lead_in_len_mm, 0.5 * pass_.length_mm)
+    _, _, _, plunge = plunge_split([tuple(p) for p in pass_.points], target)
+    return plunge
 
 
 def _duration_s(seg: ToolpathSegment, pass_, cfg: Config) -> Tuple[float, float]:

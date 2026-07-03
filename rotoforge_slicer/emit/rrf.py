@@ -222,13 +222,35 @@ class GCodeEmitter:
 
                 # 4. TRANSITION_IN: moving plunge over the first `plunge` mm of the path,
                 #    descending to layer Z. F-compensated for the Z descent (§6.2/§4.4).
-                plunge = min(lead_in, 0.5 * p.length_mm)
-                pp, deposit_pts, seg0 = _split_polyline(pts, plunge)
+                #    plunge_split snaps a multi-segment plunge to an ORIGINAL vertex so
+                #    the chord→segment A junction lands on full-length geometry.
+                from ..toolpath.segments import plunge_split
+
+                pp, deposit_pts, seg0, plunge = plunge_split(
+                    pts, min(lead_in, 0.5 * p.length_mm))
                 # The plunge is one short transition move (start -> pp), possibly spanning
                 # several original segments; its A is the chord heading kept continuous
                 # from a_start (in range — it lies within the pass's A band).
                 a_pl = (_continuity_adjust(_seg_a(start, pp, cfg.c_axis), a_start)
                         if plunge > 1e-9 else a_start)
+                # §6.3: the emitter-made junctions must obey the same per-vertex step
+                # rule as every planned vertex — the firmware interpolates the chord
+                # entry step across the plunge and the chord→segment exit step across
+                # the first deposit move; an infeasible step would slow XY below the
+                # grind floor while in contact (invariant 1).
+                from ..fill.curvature import vertex_step_ok
+
+                rem = math.hypot(deposit_pts[1][0] - pp[0], deposit_pts[1][1] - pp[1])
+                for step, seg_l, where in (
+                        (abs(a_pl - a_start), max(plunge, 1e-9), "plunge entry"),
+                        (abs(a_segs[seg0] - a_pl), max(rem, 1e-9), "plunge exit")):
+                    if step > 1e-9 and not vertex_step_ok(
+                            max(step - 1e-6, 0.0), seg_l, v / 60.0,
+                            cfg.c_axis.max_speed_deg_s, cfg.c_axis.max_scrub_deg_mm):
+                        raise ValueError(
+                            f"{where}: A steps {step:.1f} deg into a {seg_l:.2f} mm "
+                            "in-contact move — infeasible or over the scrub budget; "
+                            "shorten lead_in or refine the path (SPEC §6.3 / D13)")
                 de_plunge = p.e_per_path_mm * plunge
                 f_plunge = _compensated_feed(v, max(plunge, 1e-9),
                                              math.hypot(max(plunge, 1e-9), approach))

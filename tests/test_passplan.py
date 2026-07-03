@@ -30,6 +30,7 @@ def test_default_operating_point_single_speed():
 def test_unidirectional_raster_passes_forward_y_and_extruding():
     cfg = Config()
     cfg.fill.raster_bidirectional = False               # legacy one-way +Y sweep
+    cfg.fill.auto_heading = False                       # this test PINS the fixed +Y path
     plan = plan_toolpath(_model(), cfg)
     assert plan.npasses > 0
     for ly in plan.layers:
@@ -45,6 +46,7 @@ def test_bidirectional_raster_alternates_heading_180():
     # D13: the default raster is bidirectional — adjacent lines run 180 deg apart, so the
     # head just turns airborne instead of flying back.
     cfg = Config()                                       # raster_bidirectional defaults True
+    cfg.fill.auto_heading = False                        # pin the fixed ±Y axis asserts
     passes = [p for ly in plan_toolpath(_model(), cfg).layers for p in ly.passes]
     headings = [p.heading_deg for p in passes]
     assert any(abs(h - 90) < 1e-6 for h in headings)     # some +Y lines
@@ -217,7 +219,9 @@ def test_plan_holed_layer_splits_line_into_two_passes():
     outer = Polygon([(0, 0), (20, 0), (20, 20), (0, 20)],
                     [[(7, 8), (13, 8), (13, 12), (7, 12)]])
     model = SlicedModel([Layer(0, 0.06, [outer])], layer_height=0.12, z_min=0.0, z_max=0.12)
-    plan = plan_toolpath(model, Config())
+    cfg = Config()
+    cfg.fill.auto_heading = False        # pin the +Y hatch this hole-split fixture assumes
+    plan = plan_toolpath(model, cfg)
     per_x = Counter(round(p.start[0], 3) for ly in plan.layers for p in ly.passes)
     assert max(per_x.values()) == 2   # a holed line -> two passes
     assert min(per_x.values()) == 1   # a clear line -> one pass
