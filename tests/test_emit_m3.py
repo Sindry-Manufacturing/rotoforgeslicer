@@ -13,7 +13,9 @@ from rotoforge_slicer.emit.rrf import GCodeEmitter
 from rotoforge_slicer.toolpath.passplan import LayerPlan, Pass, ToolpathPlan
 
 CFG = Path(__file__).resolve().parents[1] / "config" / "machine_duet3.yaml"
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "screener_sample.csv"
+# the real FRAM export (Al1100, 30 kRPM grid) — see tests/test_screener.py
+FIXTURE = (Path(__file__).resolve().parent / "fixtures" /
+           "fram_rim_jet_process_window_gridAl1100_30KRPM_300CW_60CB.csv")
 
 
 def _plan(rpm_b, v_b):
@@ -79,9 +81,12 @@ def test_end_to_end_screener_sets_rpm_and_feed(tmp_path):
     trimesh.creation.box(extents=(20, 12, 2)).export(stl)
     g = slice_mesh(str(stl), str(CFG), str(FIXTURE), str(tmp_path / "box.gcode"))
 
-    assert "M3 S15000" in g            # screener-selected RPM (nv=150 ray, rep v=100)
-    assert "revs_per_mm=150" in g      # header reflects the selected ray
-    assert "traverse=100mm/min" in g
+    assert "M3 S22941" in g            # screener-selected RPM (rep cell at v=904)
+    # the header's revs/mm is the REP CELL's own rpm/traverse (22941/904);
+    # on real grid data that legitimately differs from the ray-cluster mean
+    # (~30.31) the auto search grouped it under — both are measured, not made up
+    assert "revs_per_mm=25.3772" in g
+    assert "traverse=904mm/min" in g
     es = [float(m) for l in g.splitlines() if l.startswith("G1")
           for m in re.findall(r" E(-?\d+\.?\d*)", l)]
     assert es and all(d >= 0 for d in es)   # screener E coupling, still monotonic

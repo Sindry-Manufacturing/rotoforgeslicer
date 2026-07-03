@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FRAM Rim / Jet Analytical Process Window Screener</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#111827; --panel2:#0b1220; --text:#e5e7eb; --muted:#9ca3af;
+    --line:#374151; --input:#0b1220; --focus:#7dd3fc; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,#0b1220,#172033);position:sticky;top:0;z-index:3}
+  h1{margin:0;font-size:20px}.subtitle{color:var(--muted);font-size:13px;margin-top:4px;line-height:1.45;max-width:1250px}
+  main{display:grid;grid-template-columns:390px minmax(560px,1fr) 390px;gap:14px;padding:14px;align-items:start}
+  @media(max-width:1320px){main{grid-template-columns:360px 1fr}.right{grid-column:1/-1}.left{max-height:none}.middle{min-width:0}}
+  @media(max-width:880px){main{grid-template-columns:1fr}.left,.right{max-height:none}.canvasWrap{overflow:auto}.middle{min-width:0}}
+  .panel,.card,.canvasPanel,.selected{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 24px rgba(0,0,0,.18)}
+  .left,.right{max-height:calc(100vh - 95px);overflow:auto;position:sticky;top:82px}.pad{padding:14px}
+  details{border-top:1px solid var(--line)} details:first-child{border-top:0}
+  summary{cursor:pointer;padding:12px 14px;font-weight:650;color:#f8fafc;user-select:none}.group{padding:0 14px 14px;display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+  label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);line-height:1.25}
+  input,select{width:100%;background:var(--input);color:var(--text);border:1px solid #334155;border-radius:8px;padding:8px 9px;font-size:13px;outline:none}
+  input:focus,select:focus{border-color:var(--focus);box-shadow:0 0 0 2px rgba(125,211,252,.12)}
+  button{background:#1f2937;color:var(--text);border:1px solid #475569;border-radius:9px;padding:9px 10px;font-size:13px;cursor:pointer} button:hover{border-color:#93c5fd;background:#243244} button.primary{background:#075985;border-color:#0ea5e9;color:#f0f9ff;font-weight:700}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px;border-bottom:1px solid var(--line)}.actions .wide{grid-column:1/-1}
+  .middle{min-width:560px}.cardGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}@media(max-width:1100px){.cardGrid{grid-template-columns:repeat(2,1fr)}}
+  .card{padding:12px;min-height:74px}.card .k{font-size:12px;color:var(--muted)}.card .v{font-size:20px;font-weight:750;margin-top:5px}.card .s{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}
+  .canvasPanel{padding:12px}.plotControls{display:flex;gap:10px;align-items:end;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}.plotControls label{max-width:230px}.canvasWrap{position:relative;background:#020617;border:1px solid #334155;border-radius:10px;padding:8px} canvas{display:block;width:100%;height:auto;max-height:68vh}.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}.sw{display:inline-block;width:13px;height:13px;border-radius:3px;margin-right:4px;vertical-align:-2px;border:1px solid rgba(255,255,255,.25)}
+  .selected{margin-top:12px;padding:12px}.status{font-weight:750;margin-bottom:7px}.status.good{color:#86efac}.status.bad{color:#fecaca}.status.warn{color:#fde68a}
+  table{width:100%;border-collapse:collapse;font-size:12px} th,td{border-bottom:1px solid #263244;padding:7px 5px;text-align:right;vertical-align:top} th:first-child,td:first-child{text-align:left;color:var(--muted)} tr:last-child td{border-bottom:0}
+  .note{font-size:12.5px;color:#cbd5e1;line-height:1.45;margin:0 0 9px}.eq{background:#0b1220;border:1px solid #263244;border-radius:8px;padding:9px 10px;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;overflow:auto;margin:8px 0;white-space:pre-wrap}.small{font-size:12px;color:var(--muted);line-height:1.45}.pill{display:inline-block;padding:3px 7px;border-radius:999px;border:1px solid #475569;background:#0b1220;font-size:11px;color:#cbd5e1;margin:2px 4px 2px 0}.warnBox{background:#3b2505;border:1px solid #92400e;color:#fde68a;border-radius:10px;padding:10px;font-size:12.5px;line-height:1.45;margin:10px 0 0}.okBox{background:#052e1a;border:1px solid #166534;color:#bbf7d0;border-radius:10px;padding:10px;font-size:12.5px;line-height:1.45;margin:10px 0 0}.badBox{background:#3b0a0a;border:1px solid #7f1d1d;color:#fecaca;border-radius:10px;padding:10px;font-size:12.5px;line-height:1.45;margin:10px 0 0}.footer{padding:12px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);line-height:1.45}
+</style>
+</head>
+<body>
+<header>
+  <h1>FRAM Analytical Heat / Torque / Power Process Window Screener — Rim + Jet Edition</h1>
+  <div class="subtitle">Fast first-pass FRAM screening with both the legacy annular face-contact model and a narrow rim/wheel model. The rim model decouples mechanical contact area from thermal influence area and adds a first-order perpendicular side impinging-jet cooling sink for the wheel/deposit.</div>
+</header>
+<main>
+<section class="panel left">
+  <div class="actions">
+    <button class="primary wide" id="recalcBtn">Recalculate process map</button>
+    <button id="loadExportBtn">Load exported calibration</button>
+    <button id="loadRimBtn">Load 50×1 rim + jet</button>
+    <button id="exportBtn" class="wide">Export CSV</button>
+  </div>
+
+  <details open><summary>Map ranges</summary><div class="group">
+    <label>RPM min<input data-key="rpmMin" type="number" step="1"></label>
+    <label>RPM max<input data-key="rpmMax" type="number" step="1"></label>
+    <label>Traverse min, mm/min<input data-key="travMin" type="number" step="1"></label>
+    <label>Traverse max, mm/min<input data-key="travMax" type="number" step="1"></label>
+    <label>Grid points per axis<input data-key="gridN" type="number" step="1" min="20" max="240"></label>
+    <label>Selected RPM<input data-key="selRpm" type="number" step="1"></label>
+    <label>Selected traverse, mm/min<input data-key="selTrav" type="number" step="1"></label>
+  </div></details>
+
+  <details open><summary>Machine limits</summary><div class="group">
+    <label>Max spindle torque, N·m<input data-key="maxTorque" type="number" step="0.01"></label>
+    <label>Max spindle power, kW<input data-key="maxPower" type="number" step="0.01"></label>
+    <label>Minimum usable force Fz, N<input data-key="minFz" type="number" step="0.01"></label>
+    <label>Maximum allowed force Fz, N<input data-key="maxFz" type="number" step="0.1"></label>
+  </div></details>
+
+  <details open><summary>Tool / contact geometry</summary><div class="group">
+    <label>Contact model<select data-key="contactModel"><option value="rim">narrow rim / wheel</option><option value="annular">legacy annular face</option></select></label>
+    <label>Tool / wheel diameter, mm<input data-key="D" type="number" step="0.1"></label>
+    <label>Inner inactive diameter, mm<input data-key="Di" type="number" step="0.1"></label>
+    <label>Annular contact-area fraction<input data-key="areaFrac" type="number" step="0.01" min="0.001" max="1"></label>
+    <label>Wheel/rim width, mm<input data-key="wheelW" type="number" step="0.01"></label>
+    <label>Mechanical contact length, mm<input data-key="contactLen" type="number" step="0.01"></label>
+    <label>Mechanical active fraction<input data-key="contactFrac" type="number" step="0.01" min="0.001" max="2"></label>
+    <label>Rim torque-arm factor ×R<input data-key="rimArmFactor" type="number" step="0.01" min="0.1" max="1.5"></label>
+    <label>Shear/action-zone depth, mm<input data-key="hShear" type="number" step="0.01"></label>
+    <label>Thermal length multiplier ×D<input data-key="lenMult" type="number" step="0.01"></label>
+    <label>Thermal influence width, mm<input data-key="thermalW" type="number" step="0.1"></label>
+    <label>Thermal area multiplier<input data-key="thermalAreaMult" type="number" step="0.05"></label>
+    <label>Thermal mass multiplier<input data-key="massMult" type="number" step="0.05"></label>
+    <label>Conduction multiplier<input data-key="condMult" type="number" step="0.05"></label>
+  </div></details>
+
+  <details open><summary>Friction, force, and heat partition</summary><div class="group">
+    <label>Normal force Fz, N<input data-key="Fz" type="number" step="0.1"></label>
+    <label>Coulomb friction coefficient μ<input data-key="mu" type="number" step="0.01" min="0"></label>
+    <label>Traction closure<select data-key="tractionMode"><option value="min">conservative min(μp, mk)</option><option value="blend">partial sliding/sticking blend</option><option value="stick">sticking/shear-capped</option></select></label>
+    <label>Sticking-area fraction δ<input data-key="stickFrac" type="number" step="0.01" min="0" max="1"></label>
+    <label>Shear/sticking factor m<input data-key="shearFactor" type="number" step="0.01" min="0" max="1.5"></label>
+    <label>Heat capture into AZ η<input data-key="heatEff" type="number" step="0.01" min="0" max="1.5"></label>
+    <label>Extra plastic heat factor<input data-key="plasticHeat" type="number" step="0.01" min="0"></label>
+  </div></details>
+
+  <details open><summary>Feed and deposit balance</summary><div class="group">
+    <label>Feed mode<select data-key="feedMode"><option value="balanced">auto-balance to bead geometry</option><option value="fixed">fixed feed speed</option></select></label>
+    <label>Feed area source<select data-key="feedAreaMode"><option value="diameter">round feed diameter</option><option value="manual">manual area</option></select></label>
+    <label>Feedstock diameter, mm<input data-key="feedDia" type="number" step="0.01"></label>
+    <label>Manual feedstock area, mm²<input data-key="feedAreaManual" type="number" step="0.001"></label>
+    <label>Fixed feed speed, mm/min<input data-key="feedSpeed" type="number" step="1"></label>
+    <label>Capture efficiency<input data-key="captureEff" type="number" step="0.01" min="0" max="1"></label>
+    <label>Target bead width, mm<input data-key="beadW" type="number" step="0.01"></label>
+    <label>Target layer height, mm<input data-key="layerH" type="number" step="0.01"></label>
+    <label>Feed ratio lower bound<input data-key="phiMin" type="number" step="0.01"></label>
+    <label>Feed ratio upper bound<input data-key="phiMax" type="number" step="0.01"></label>
+  </div></details>
+
+  <details open><summary>Material and preheat</summary><div class="group">
+    <label>Feed preheat, °C<input data-key="Tfeed" type="number" step="1"></label>
+    <label>Surface preheat, °C<input data-key="Tsurf" type="number" step="1"></label>
+    <label>Feed thermal weight<input data-key="feedThermW" type="number" step="0.01" min="0" max="1"></label>
+    <label>Air / jet temperature, °C<input data-key="Tair" type="number" step="1"></label>
+    <label>Solidus estimate, °C<input data-key="solidus" type="number" step="1"></label>
+    <label>Density, kg/m³<input data-key="rho" type="number" step="1"></label>
+    <label>Heat capacity, J/kg·K<input data-key="cp" type="number" step="1"></label>
+    <label>Thermal conductivity, W/m·K<input data-key="k" type="number" step="1"></label>
+  </div></details>
+
+  <details open><summary>Forced-air side jet cooling</summary><div class="group">
+    <label>Cooling enabled?<select data-key="coolingOn"><option value="yes">yes</option><option value="no">no</option></select></label>
+    <label>Jet velocity setpoint, m/s<input data-key="jetU" type="number" step="1"></label>
+    <label>Nozzle/orifice diameter, mm<input data-key="jetD" type="number" step="0.1"></label>
+    <label>Standoff H, mm<input data-key="jetH" type="number" step="0.1"></label>
+    <label>Fan static pressure, kPa<input data-key="fanPressure" type="number" step="0.1"></label>
+    <label>Cooled footprint diameter, mm<input data-key="coolDia" type="number" step="0.5"></label>
+    <label>Average h multiplier<input data-key="jetHMult" type="number" step="0.05"></label>
+    <label>Max air temperature rise, K<input data-key="jetDeltaTmax" type="number" step="1"></label>
+    <label>Cooling credited directly to AZ<input data-key="coolAZFrac" type="number" step="0.01" min="0" max="1"></label>
+    <label>Air density, kg/m³<input data-key="airRho" type="number" step="0.01"></label>
+    <label>Air viscosity, Pa·s<input data-key="airMu" type="number" step="0.000001"></label>
+    <label>Air conductivity, W/m·K<input data-key="airK" type="number" step="0.001"></label>
+  </div></details>
+
+  <details open><summary>Hot-flow law and stability gates</summary><div class="group">
+    <label>Flow stress σref, MPa<input data-key="sigmaRef" type="number" step="1"></label>
+    <label>Reference temperature Tref, °C<input data-key="Tref" type="number" step="1"></label>
+    <label>Thermal softening β, 1/K<input data-key="betaSoft" type="number" step="0.001"></label>
+    <label>Rate exponent<input data-key="rateExp" type="number" step="0.01"></label>
+    <label>Reference strain rate, s⁻¹<input data-key="edotRef" type="number" step="1"></label>
+    <label>Minimum eq. strain<input data-key="epsMin" type="number" step="0.1"></label>
+    <label>AZ lower bound, °C<input data-key="Tmin" type="number" step="1"></label>
+    <label>AZ upper bound, °C<input data-key="Tmax" type="number" step="1"></label>
+    <label>Min pressure, MPa<input data-key="pMin" type="number" step="0.1"></label>
+    <label>Max pressure, MPa<input data-key="pMax" type="number" step="1"></label>
+    <label>Min p/σflow<input data-key="pSigMin" type="number" step="0.01"></label>
+    <label>Max p/σflow<input data-key="pSigMax" type="number" step="0.01"></label>
+    <label>Max AZ cooling fraction<input data-key="coolFracMax" type="number" step="0.01"></label>
+  </div></details>
+</section>
+
+<section class="middle">
+  <div class="cardGrid">
+    <div class="card"><div class="k">Stable cells</div><div class="v" id="stableCount">—</div><div class="s" id="stablePct">—</div></div>
+    <div class="card"><div class="k">RPM stable range</div><div class="v" id="rpmBounds">—</div><div class="s">at current force/feed/cooling settings</div></div>
+    <div class="card"><div class="k">Traverse stable range</div><div class="v" id="travBounds">—</div><div class="s">mm/min</div></div>
+    <div class="card"><div class="k">Dominant limiter</div><div class="v" id="limiter">—</div><div class="s" id="limitDetail">—</div></div>
+  </div>
+
+  <div class="canvasPanel">
+    <div class="plotControls">
+      <label>Display mode<select id="displayMode"><option value="class">classification</option><option value="temp">AZ temperature</option><option value="power">spindle power</option><option value="torque">spindle torque</option><option value="pressure">contact pressure</option><option value="psigma">p/σflow</option><option value="cooling">AZ cooling fraction</option><option value="heatinput">net AZ heat input</option><option value="strain">equivalent strain</option><option value="phi">feed ratio Φ</option></select></label>
+      <label>Color stable cells only?<select id="stableOverlay"><option value="all">all cells colored</option><option value="stable">stable cells emphasized</option></select></label>
+    </div>
+    <div class="canvasWrap"><canvas id="mapCanvas" width="980" height="720"></canvas></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="selected" id="selectedPanel">—</div>
+</section>
+
+<section class="panel right">
+  <div class="pad">
+    <p class="note"><b>What changed:</b> the narrow-rim mode uses a small mechanical contact patch for pressure/torque while using a separate thermal influence area for heat capacity and conduction. This avoids the old square-cube artifact where a 1 mm wheel width made the action-zone thermal mass collapse unrealistically.</p>
+    <div id="modelWarnings"></div>
+    <p class="note" style="margin-top:12px"><b>Calibration note:</b> the “Load exported calibration” button reproduces the exported annular-style calibration as closely as possible from the PDF/CSV settings. The “Load 50×1 rim + jet” button converts to a 50 mm diameter × 1 mm wide rim with a 6 mm / 80 m·s⁻¹ perpendicular side jet.</p>
+
+    <h3 style="margin:16px 0 8px;font-size:15px">Model equations</h3>
+    <div class="eq">Annular contact:
+Amech = fA · π(Ro² − Ri²)
+Rbar = (2/3) · (Ro³ − Ri³)/(Ro² − Ri²)
+
+Narrow rim contact:
+Amech = fcontact · wwheel · Lcontact
+Rbar = farm · Ro
+Athermal = fthermal · wthermal · Lthermal
+Lthermal = length multiplier · D</div>
+    <div class="eq">p = Fz / Amech
+ė ≈ √[(ωRbar)² + v²] / hAZ
+σflow = σref · exp[−β(T − Tref)] · (ė/ėref)^mrate
+τcap = msticking · σflow / √3
+τ = min(μp, τcap)                  conservative
+τ = min[(1−δ)μp + δτcap, τcap]     partial blend
+τ = τcap                            sticking
+M = τ · Amech · Rbar
+Pspindle = ωM</div>
+    <div class="eq">Cmass = ρcp · Athermal · hAZ · mass multiplier
+Ccond ≈ 2k · Athermal · √[tdwell/(πα)] · conduction multiplier
+Pheat,AZ = ηheat · Pspindle · (1 + fplastic)
+Pnet,AZ = max(Pheat,AZ − χAZ Pjet, 0)
+TAZ = Tin + Pnet,AZ · tdwell / (Cmass + Ccond)</div>
+    <div class="eq">Side impinging jet estimate:
+Ueff = min(Uset, √(2ΔP/ρair))
+Re = ρair Ueff dj / μair
+Nu0 ≈ 0.799 Re^0.5 Pr^0.4 (H/dj)^0.044
+havg = multiplier · Nu0 kair/dj
+Pjet = min[havg Acool (T − Tair), ṁair cp,air ΔTair,max]</div>
+    <p class="small"><span class="pill">mechanical contact area</span><span class="pill">thermal influence area</span><span class="pill">pressure gates</span><span class="pill">p/σ gates</span><span class="pill">CPAP side-jet sink</span><span class="pill">feed diameter mode</span></p>
+  </div>
+  <div class="footer">This is a first-pass analytical process-window screener. Treat stable cells as candidates for trials or higher-fidelity CEL/ALE/SPH modeling, not final parameter qualification.</div>
+</section>
+</main>
+
+<script>
+(function(){
+'use strict';
+const exportedCalibration = {
+  rpmMin:5000,rpmMax:22000,travMin:50,travMax:1000,gridN:86,selRpm:21744,selTrav:57,
+  maxTorque:2,maxPower:1.2,minFz:0.01,maxFz:30,
+  contactModel:'annular',D:50,Di:0,areaFrac:0.15,wheelW:1,contactLen:5,contactFrac:1,rimArmFactor:1,
+  hShear:0.1,lenMult:1,thermalW:6,thermalAreaMult:1,massMult:1,condMult:1,
+  Fz:10,mu:0.9,tractionMode:'min',stickFrac:0.35,shearFactor:0.65,heatEff:0.9434,plasticHeat:0.10,
+  feedMode:'balanced',feedAreaMode:'diameter',feedDia:0.50,feedAreaManual:0.19635,feedSpeed:149.5,captureEff:0.97,beadW:1.0,layerH:0.50,phiMin:0.85,phiMax:1.18,
+  Tfeed:25,Tsurf:203.8,feedThermW:0.45,Tair:25,solidus:582,rho:2700,cp:900,k:167,
+  coolingOn:'no',jetU:80,jetD:6,jetH:15,fanPressure:15,coolDia:30,jetHMult:0.50,jetDeltaTmax:80,coolAZFrac:0.20,airRho:1.18,airMu:0.0000185,airK:0.026,
+  sigmaRef:38,Tref:480,betaSoft:0.006,rateExp:0.06,edotRef:10,epsMin:5,Tmin:250,Tmax:540,pMin:0,pMax:999,pSigMin:0,pSigMax:999,coolFracMax:0.90
+};
+const rimJetDefaults = Object.assign({}, exportedCalibration, {
+  contactModel:'rim', areaFrac:0.15, wheelW:1.00, contactLen:5.00, contactFrac:1.00, rimArmFactor:1.00,
+  thermalW:6.0, thermalAreaMult:1.0, Fz:10, mu:0.60, coolingOn:'yes', pMin:0, pMax:250, pSigMin:0, pSigMax:999, coolFracMax:0.90
+});
+const els={};
+document.querySelectorAll('[data-key]').forEach(el=>{els[el.dataset.key]=el;});
+const canvas=document.getElementById('mapCanvas');
+const ctx=canvas.getContext('2d');
+const displayMode=document.getElementById('displayMode');
+const stableOverlay=document.getElementById('stableOverlay');
+let state={grid:[],rows:[],vals:{},selected:null,csv:''};
+
+function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
+function fmt(x,d=2){
+  if(!isFinite(x))return '—';
+  const ax=Math.abs(x);
+  if(ax>=1000000)return x.toExponential(2);
+  if(ax>=1000)return x.toFixed(0);
+  if(ax>=100)return x.toFixed(1);
+  if(ax>=10)return x.toFixed(d===0?0:1);
+  return x.toFixed(d);
+}
+function rangeFmt(a,b,u='',d=0){return(!isFinite(a)||!isFinite(b))?'—':`${fmt(a,d)}–${fmt(b,d)}${u}`;}
+function setVals(o){for(const [k,v] of Object.entries(o)){if(els[k])els[k].value=v;}}
+function getVals(){
+  const v={};
+  for(const [k,el] of Object.entries(els))v[k]=el.tagName==='SELECT'?el.value:parseFloat(el.value);
+  v.gridN=clamp(Math.round(v.gridN||86),20,240);
+  v.rpmMin=Math.max(0,v.rpmMin); v.rpmMax=Math.max(v.rpmMin+1,v.rpmMax);
+  v.travMin=Math.max(0.001,v.travMin); v.travMax=Math.max(v.travMin+1,v.travMax);
+  v.areaFrac=clamp(v.areaFrac||0.01,0.0001,1); v.contactFrac=clamp(v.contactFrac||1,0.0001,2);
+  v.rimArmFactor=clamp(v.rimArmFactor||1,0.05,2); v.heatEff=clamp(v.heatEff||0,0,2);
+  v.feedThermW=clamp(v.feedThermW||0,0,1); v.captureEff=clamp(v.captureEff||0.001,0.001,1);
+  v.stickFrac=clamp(v.stickFrac||0,0,1); v.coolAZFrac=clamp(v.coolAZFrac||0,0,1);
+  v.jetHMult=Math.max(0,v.jetHMult||0); v.coolFracMax=Math.max(0,v.coolFracMax||0);
+  v.pMax=Math.max(v.pMin||0,v.pMax||0); v.pSigMax=Math.max(v.pSigMin||0,v.pSigMax||0);
+  return v;
+}
+function feedArea(v){
+  if(v.feedAreaMode==='diameter')return Math.PI*Math.max(v.feedDia,0)**2/4;
+  return Math.max(v.feedAreaManual,0);
+}
+function geometry(v){
+  const mm=1e-3;
+  const Ro=Math.max(v.D,0.01)*mm/2;
+  const Ri=Math.min(Math.max(v.Di,0)*mm/2,Math.max(Ro-mm*0.001,0));
+  let Amech,Rbar,Athermal,Lthermal,Lmech,modelLabel;
+  Lthermal=Math.max(v.lenMult*v.D*mm,1e-8);
+  if(v.contactModel==='annular'){
+    const ageom=Math.PI*Math.max(Ro*Ro-Ri*Ri,1e-14);
+    Amech=v.areaFrac*ageom;
+    const denom=Math.max(Ro*Ro-Ri*Ri,1e-14);
+    Rbar=(2/3)*Math.max(Ro**3-Ri**3,0)/denom;
+    Athermal=Math.max(Amech*Math.max(v.thermalAreaMult,0.0001),1e-14);
+    Lmech=Lthermal;
+    modelLabel='legacy annular face';
+  } else {
+    const w=Math.max(v.wheelW,0.001)*mm;
+    Lmech=Math.max(v.contactLen,0.001)*mm;
+    Amech=Math.max(w*Lmech*v.contactFrac,1e-14);
+    Rbar=Math.max(v.rimArmFactor*Ro,1e-9);
+    const wt=Math.max(v.thermalW,0.001)*mm;
+    Athermal=Math.max(wt*Lthermal*Math.max(v.thermalAreaMult,0.0001),1e-14);
+    modelLabel='narrow rim / wheel';
+  }
+  return {Ro,Ri,Amech,Rbar,Athermal,Lthermal,Lmech,modelLabel};
+}
+function jetCoolingAt(T,v){
+  if(v.coolingOn!=='yes')return {Pjet:0,PcoolAZ:0,Re:0,hAvg:0,mDot:0,Ueff:0,Pcap:0,qConv:0,area:0};
+  const rho=Math.max(v.airRho,0.01), mu=Math.max(v.airMu,1e-7), kAir=Math.max(v.airK,0.001), cpAir=1005, Pr=0.71;
+  const dj=Math.max(v.jetD,0.01)*1e-3, H=Math.max(v.jetH,0)*1e-3;
+  const Uset=Math.max(v.jetU,0), pressure=Math.max(v.fanPressure,0)*1000;
+  const Ucap=pressure>0?Math.sqrt(2*pressure/rho):Uset;
+  const Ueff=Math.min(Uset,Ucap);
+  const Ajet=Math.PI*dj*dj/4;
+  const mDot=rho*Ueff*Ajet;
+  const Re=rho*Ueff*dj/mu;
+  const HD=Math.max(H/dj,0.05);
+  const Nu0=0.799*Math.pow(Math.max(Re,1),0.5)*Math.pow(Pr,0.4)*Math.pow(HD,0.0436);
+  const hStag=Nu0*kAir/dj;
+  const hAvg=Math.max(0,v.jetHMult)*hStag;
+  const dCool=Math.max(v.coolDia,0.1)*1e-3;
+  const Acool=Math.PI*dCool*dCool/4;
+  const qConv=Math.max(0,hAvg*Acool*Math.max(T-v.Tair,0));
+  const Pcap=mDot*cpAir*Math.max(v.jetDeltaTmax,0);
+  const Pjet=Math.min(qConv,Pcap);
+  const PcoolAZ=v.coolAZFrac*Pjet;
+  return {Pjet,PcoolAZ,Re,hAvg,mDot,Ueff,Pcap,qConv,area:Acool};
+}
+function calcPoint(rpm,trav,v){
+  const g=geometry(v), Fz=Math.max(v.Fz,0), p=Fz/g.Amech;
+  const omega=2*Math.PI*rpm/60, vms=Math.max(trav/60000,1e-10), h=Math.max(v.hShear,0.001)*1e-3;
+  const tdwell=g.Lthermal/vms, tshear=g.Lmech/vms;
+  const Tin=v.feedThermW*v.Tfeed+(1-v.feedThermW)*v.Tsurf;
+  const alpha=Math.max(v.k/Math.max(v.rho*v.cp,1),1e-10);
+  const Cmass=Math.max(v.rho*v.cp*g.Athermal*h*Math.max(v.massMult,0.0001),1e-9);
+  const Ccond=Math.max(0,2*v.k*g.Athermal*Math.sqrt(tdwell/(Math.PI*alpha))*Math.max(v.condMult,0));
+  const Ceff=Math.max(Cmass+Ccond,1e-9);
+  const surfaceSpeed=omega*g.Rbar;
+  const edot=Math.max(Math.sqrt(surfaceSpeed*surfaceSpeed+vms*vms)/h,1e-9);
+  let T=Tin+150, sigma=0,tauCap=0,tauCoul=0,tau=0,M=0,P=0,Pheat=0,Pnet=0,cool={Pjet:0,PcoolAZ:0,Re:0,hAvg:0,mDot:0,Ueff:0,Pcap:0,qConv:0,area:0};
+  for(let i=0;i<18;i++){
+    const rateTerm=Math.pow(Math.max(edot/Math.max(v.edotRef,1e-9),1e-9),v.rateExp);
+    sigma=Math.max(0.01e6,Math.min(2000e6,v.sigmaRef*1e6*Math.exp(-v.betaSoft*(T-v.Tref))*rateTerm));
+    tauCap=Math.max(0,v.shearFactor*sigma/Math.sqrt(3));
+    tauCoul=Math.max(0,v.mu*p);
+    if(v.tractionMode==='stick')tau=tauCap;
+    else if(v.tractionMode==='blend')tau=Math.min((1-v.stickFrac)*tauCoul+v.stickFrac*tauCap,tauCap);
+    else tau=Math.min(tauCoul,tauCap);
+    M=tau*g.Amech*g.Rbar;
+    P=omega*M;
+    Pheat=Math.max(0,v.heatEff*P*(1+Math.max(v.plasticHeat,0)));
+    cool=jetCoolingAt(T,v);
+    Pnet=Math.max(0,Pheat-cool.PcoolAZ);
+    const Tnew=Tin+(Pnet*tdwell)/Ceff;
+    T=0.62*T+0.38*Tnew;
+  }
+  const Afeed=feedArea(v);
+  const Qtarget=Math.max(v.beadW*v.layerH*trav,1e-12);
+  let feedSpeed=v.feedSpeed;
+  if(v.feedMode==='balanced')feedSpeed=Qtarget/Math.max(Afeed*v.captureEff,1e-12);
+  const Qfeed=Math.max(Afeed*feedSpeed,0), Qdep=v.captureEff*Qfeed, phi=Qdep/Qtarget;
+  const gamma=Math.sqrt(surfaceSpeed*surfaceSpeed+vms*vms)*tshear/h;
+  const epsEq=gamma/Math.sqrt(3);
+  const workDensity=tau*gamma/1e6;
+  const heatInputGross=P*60/Math.max(trav,1e-12);
+  const heatInputNet=Pnet*60/Math.max(trav,1e-12);
+  const nOverV=rpm/Math.max(trav,1e-12);
+  const pMPa=p/1e6, pSig=p/Math.max(sigma,1), coolFrac=cool.PcoolAZ/Math.max(Pheat,1e-12);
+  let regime;
+  if(v.tractionMode==='stick')regime='sticking/shear-capped';
+  else if(v.tractionMode==='blend')regime=`partial blend, δ=${fmt(v.stickFrac,2)}`;
+  else regime=tauCoul<=tauCap?'Coulomb/sliding-limited':'flow-stress/shear-capped';
+  const reasons=[],cats=[];
+  if(M>v.maxTorque){reasons.push(`torque ${fmt(M,2)} N·m > limit ${fmt(v.maxTorque,2)}`);cats.push('machine');}
+  if(P/1000>v.maxPower){reasons.push(`power ${fmt(P/1000,2)} kW > limit ${fmt(v.maxPower,2)}`);cats.push('machine');}
+  if(Fz<v.minFz){reasons.push(`Fz ${fmt(Fz,2)} N < minimum ${fmt(v.minFz,2)}`);cats.push('force');}
+  if(Fz>v.maxFz){reasons.push(`Fz ${fmt(Fz,2)} N > maximum ${fmt(v.maxFz,2)}`);cats.push('force');}
+  if(pMPa<v.pMin){reasons.push(`contact pressure ${fmt(pMPa,2)} MPa < minimum ${fmt(v.pMin,2)}`);cats.push('pressure');}
+  if(pMPa>v.pMax){reasons.push(`contact pressure ${fmt(pMPa,2)} MPa > maximum ${fmt(v.pMax,2)}`);cats.push('pressure');}
+  if(pSig<v.pSigMin){reasons.push(`p/σ ${fmt(pSig,3)} < minimum ${fmt(v.pSigMin,3)}`);cats.push('pressure');}
+  if(pSig>v.pSigMax){reasons.push(`p/σ ${fmt(pSig,3)} > maximum ${fmt(v.pSigMax,3)}`);cats.push('pressure');}
+  if(T<v.Tmin){reasons.push(`AZ temperature ${fmt(T,1)} °C < lower bound ${fmt(v.Tmin,1)}`);cats.push('cold');}
+  if(T>v.Tmax){reasons.push(`AZ temperature ${fmt(T,1)} °C > upper bound ${fmt(v.Tmax,1)}`);cats.push('hot');}
+  if(T>0.98*v.solidus){reasons.push('AZ temperature is within 2% of the solidus estimate');cats.push('hot');}
+  if(phi<v.phiMin){reasons.push(`feed ratio Φ ${fmt(phi,2)} < lower bound ${fmt(v.phiMin,2)}`);cats.push('feed');}
+  if(phi>v.phiMax){reasons.push(`feed ratio Φ ${fmt(phi,2)} > upper bound ${fmt(v.phiMax,2)}`);cats.push('feed');}
+  if(epsEq<v.epsMin){reasons.push(`eq. strain ${fmt(epsEq,2)} < minimum ${fmt(v.epsMin,2)}`);cats.push('strain');}
+  if(coolFrac>v.coolFracMax){reasons.push(`AZ cooling fraction ${fmt(coolFrac,2)} > limit ${fmt(v.coolFracMax,2)}`);cats.push('cooling');}
+  let cat='stable';
+  for(const pr of ['machine','force','pressure','hot','cold','feed','strain','cooling'])if(cats.includes(pr)){cat=pr;break;}
+  return {rpm,trav,Fz,Afeed,Amech:g.Amech,Athermal:g.Athermal,Rbar:g.Rbar,Lthermal:g.Lthermal,Lmech:g.Lmech,modelLabel:g.modelLabel,p,omega,vms,h,tdwell,tshear,Tin,Cmass,Ccond,Ceff,edot,sigma,tauCap,tauCoul,tau,M,P,Pheat,Pnet,T,Qtarget,feedSpeed,Qfeed,Qdep,phi,gamma,epsEq,workDensity,heatInputGross,heatInputNet,nOverV,surfaceSpeed,regime,pSig,coolFrac,cool,pass:reasons.length===0,reasons,cat};
+}
+function recalc(){
+  const v=getVals(); state.vals=v;
+  const N=v.gridN, grid=[], rows=[];
+  for(let iy=0;iy<N;iy++){
+    const rpm=v.rpmMin+(v.rpmMax-v.rpmMin)*iy/(N-1), row=[];
+    for(let ix=0;ix<N;ix++){
+      const trav=v.travMin+(v.travMax-v.travMin)*ix/(N-1);
+      const pt=calcPoint(rpm,trav,v); row.push(pt); grid.push(pt);
+    }
+    rows.push(row);
+  }
+  state.rows=rows; state.grid=grid; state.selected=calcPoint(v.selRpm,v.selTrav,v);
+  updateSummary(); drawMap(); updateSelected(state.selected); updateWarnings(); makeCsv();
+}
+function labelCat(c){return({stable:'stable',cold:'too cold',hot:'too hot',machine:'machine limit',feed:'feed mismatch',strain:'low strain',force:'force limit',pressure:'pressure gate',cooling:'cooling limit'}[c]||c);}
+function catColor(c){return({stable:'#22c55e',cold:'#2563eb',hot:'#ef4444',machine:'#a855f7',feed:'#f59e0b',strain:'#eab308',force:'#ec4899',pressure:'#14b8a6',cooling:'#06b6d4'}[c]||'#64748b');}
+function updateSummary(){
+  const stable=state.grid.filter(d=>d.pass), total=state.grid.length;
+  document.getElementById('stableCount').textContent=`${stable.length}/${total}`;
+  document.getElementById('stablePct').textContent=`${fmt(100*stable.length/Math.max(total,1),1)}% of scanned cells`;
+  if(stable.length){
+    const r=[Math.min(...stable.map(d=>d.rpm)),Math.max(...stable.map(d=>d.rpm))], t=[Math.min(...stable.map(d=>d.trav)),Math.max(...stable.map(d=>d.trav))];
+    document.getElementById('rpmBounds').textContent=rangeFmt(r[0],r[1],'',0);
+    document.getElementById('travBounds').textContent=rangeFmt(t[0],t[1],'',0);
+  } else {document.getElementById('rpmBounds').textContent='none';document.getElementById('travBounds').textContent='none';}
+  const counts={}; for(const d of state.grid)counts[d.cat]=(counts[d.cat]||0)+1; delete counts.stable;
+  const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('limiter').textContent=top?labelCat(top[0]):'none';
+  document.getElementById('limitDetail').textContent=top?`${top[1]} cells`:'all scanned cells pass';
+}
+function scalarColor(x,min,max){
+  if(!isFinite(x))return '#111827';
+  const t=clamp((x-min)/Math.max(max-min,1e-12),0,1);
+  const stops=[[0,[37,99,235]],[.35,[14,165,233]],[.55,[34,197,94]],[.75,[245,158,11]],[1,[239,68,68]]];
+  let a=stops[0],b=stops[stops.length-1];
+  for(let i=0;i<stops.length-1;i++)if(t>=stops[i][0]&&t<=stops[i+1][0]){a=stops[i];b=stops[i+1];break;}
+  const u=(t-a[0])/Math.max(b[0]-a[0],1e-12), rgb=a[1].map((vv,i)=>Math.round(vv+(b[1][i]-vv)*u));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+function valueByMode(d,m){
+  return m==='temp'?d.T:m==='power'?d.P/1000:m==='torque'?d.M:m==='pressure'?d.p/1e6:m==='psigma'?d.pSig:m==='cooling'?d.coolFrac:m==='heatinput'?d.heatInputNet:m==='strain'?d.epsEq:m==='phi'?d.phi:NaN;
+}
+function drawMap(){
+  const v=state.vals, mode=displayMode.value, overlay=stableOverlay.value, W=canvas.width, H=canvas.height, m={l:75,r:25,t:30,b:70}, pw=W-m.l-m.r, ph=H-m.t-m.b, N=v.gridN;
+  ctx.clearRect(0,0,W,H); ctx.fillStyle='#020617'; ctx.fillRect(0,0,W,H);
+  let smin=Infinity,smax=-Infinity;
+  if(mode!=='class'){
+    for(const d of state.grid){const x=valueByMode(d,mode); if(isFinite(x)){smin=Math.min(smin,x); smax=Math.max(smax,x);}}
+    if(mode==='temp'){smin=Math.min(smin,v.Tmin);smax=Math.max(smax,v.Tmax);} if(mode==='power'){smin=0;smax=Math.max(smax,v.maxPower);} if(mode==='torque'){smin=0;smax=Math.max(smax,v.maxTorque);} if(mode==='pressure'){smin=Math.min(smin,v.pMin);smax=Math.max(smax,Math.min(v.pMax,1000));} if(mode==='psigma'){smin=Math.min(smin,v.pSigMin);smax=Math.max(smax,Math.min(v.pSigMax,10));} if(mode==='phi'){smin=Math.min(smin,v.phiMin);smax=Math.max(smax,v.phiMax);} if(mode==='strain'){smin=0;smax=Math.max(smax,v.epsMin);} if(mode==='cooling'){smin=0;smax=Math.max(smax,v.coolFracMax);} if(mode==='heatinput'){smin=0;}
+  }
+  const cw=pw/N,ch=ph/N;
+  for(let iy=0;iy<N;iy++)for(let ix=0;ix<N;ix++){
+    const d=state.rows[iy][ix]; let color=mode==='class'?catColor(d.cat):scalarColor(valueByMode(d,mode),smin,smax);
+    if(mode!=='class'&&overlay==='stable'&&!d.pass)color='#1f2937';
+    ctx.fillStyle=color; ctx.fillRect(m.l+ix*cw,m.t+(N-1-iy)*ch,Math.ceil(cw)+.5,Math.ceil(ch)+.5);
+  }
+  if(mode==='class')drawBoundaryDots(m,pw,ph,N,v);
+  ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=1; ctx.strokeRect(m.l,m.t,pw,ph);
+  ctx.fillStyle='#e5e7eb'; ctx.font='13px system-ui, sans-serif'; ctx.textAlign='center'; ctx.fillText('Traverse speed, mm/min',m.l+pw/2,H-24);
+  ctx.save(); ctx.translate(20,m.t+ph/2); ctx.rotate(-Math.PI/2); ctx.fillText('Spindle speed, RPM',0,0); ctx.restore();
+  ctx.font='12px system-ui, sans-serif'; ctx.fillStyle='#cbd5e1'; ctx.strokeStyle='#475569';
+  for(let i=0;i<=5;i++){
+    const x=m.l+pw*i/5, val=v.travMin+(v.travMax-v.travMin)*i/5; ctx.beginPath(); ctx.moveTo(x,m.t+ph); ctx.lineTo(x,m.t+ph+5); ctx.stroke(); ctx.textAlign='center'; ctx.fillText(fmt(val,0),x,m.t+ph+21);
+    const y=m.t+ph-ph*i/5, rval=v.rpmMin+(v.rpmMax-v.rpmMin)*i/5; ctx.beginPath(); ctx.moveTo(m.l-5,y); ctx.lineTo(m.l,y); ctx.stroke(); ctx.textAlign='right'; ctx.fillText(fmt(rval,0),m.l-9,y+4);
+  }
+  const sx=m.l+pw*(v.selTrav-v.travMin)/(v.travMax-v.travMin), sy=m.t+ph-ph*(v.selRpm-v.rpmMin)/(v.rpmMax-v.rpmMin);
+  if(isFinite(sx)&&isFinite(sy)){ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(sx,sy,7,0,Math.PI*2); ctx.stroke(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(sx,sy,9,0,Math.PI*2); ctx.stroke();}
+  updateLegend(mode,smin,smax);
+}
+function drawBoundaryDots(m,pw,ph,N,v){
+  const marks=[{check:d=>Math.abs(d.T-v.Tmin)<5,color:'#bfdbfe'},{check:d=>Math.abs(d.T-v.Tmax)<5,color:'#fecaca'},{check:d=>Math.abs(d.P/1000-v.maxPower)<0.05,color:'#f5d0fe'},{check:d=>Math.abs(d.M-v.maxTorque)<0.05,color:'#ddd6fe'}], cw=pw/N,ch=ph/N;
+  for(const mark of marks){ctx.fillStyle=mark.color; for(let iy=0;iy<N;iy+=2)for(let ix=0;ix<N;ix+=2){const d=state.rows[iy][ix]; if(mark.check(d))ctx.fillRect(m.l+ix*cw+cw*.35,m.t+(N-1-iy)*ch+ch*.35,Math.max(1.2,cw*.3),Math.max(1.2,ch*.3));}}
+}
+function updateLegend(mode,min,max){
+  const L=document.getElementById('legend');
+  if(mode==='class'){
+    L.innerHTML=[['stable','stable'],['cold','too cold'],['hot','too hot'],['machine','machine limit'],['pressure','pressure gate'],['feed','feed mismatch'],['strain','low strain'],['force','force limit'],['cooling','cooling limit']].map(([c,t])=>`<span><span class="sw" style="background:${catColor(c)}"></span>${t}</span>`).join('');
+  } else {
+    const label={temp:'AZ temperature °C',power:'spindle power kW',torque:'spindle torque N·m',pressure:'contact pressure MPa',psigma:'pressure/flow-stress ratio',cooling:'AZ cooling fraction',heatinput:'net AZ heat input J/mm',strain:'equivalent strain',phi:'feed ratio Φ'}[mode];
+    L.innerHTML=`<span><span class="sw" style="background:${scalarColor(min,min,max)}"></span>${fmt(min,2)}</span><span>${label}</span><span><span class="sw" style="background:${scalarColor(max,min,max)}"></span>${fmt(max,2)}</span>`;
+  }
+}
+function row(name,value){return `<tr><td>${name}</td><td>${value}</td></tr>`;}
+function updateSelected(d){
+  const cls=d.pass?'good':(d.cat==='hot'||d.cat==='machine'||d.cat==='pressure'?'bad':'warn'), box=d.pass?'okBox':(d.cat==='hot'||d.cat==='machine'||d.cat==='pressure'?'badBox':'warnBox');
+  const reasons=d.pass?'All enabled screening gates pass.':d.reasons.map(r=>'• '+r).join('<br>');
+  const rows=[];
+  rows.push(row('RPM / traverse',`${fmt(d.rpm,0)} rpm / ${fmt(d.trav,0)} mm/min`));
+  rows.push(row('Contact model',d.modelLabel));
+  rows.push(row('AZ temperature',`${fmt(d.T,1)} °C`));
+  rows.push(row('Torque / spindle power',`${fmt(d.M,3)} N·m / ${fmt(d.P/1000,3)} kW`));
+  rows.push(row('Gross / net AZ heat input',`${fmt(d.heatInputGross,1)} / ${fmt(d.heatInputNet,1)} J/mm`));
+  rows.push(row('Mechanical / thermal area',`${fmt(d.Amech*1e6,3)} / ${fmt(d.Athermal*1e6,1)} mm²`));
+  rows.push(row('Contact pressure',`${fmt(d.p/1e6,3)} MPa`));
+  rows.push(row('p/σflow',`${fmt(d.pSig,4)}`));
+  rows.push(row('Contact shear τ',`${fmt(d.tau/1e6,3)} MPa`));
+  rows.push(row('Coulomb shear μp',`${fmt(d.tauCoul/1e6,3)} MPa`));
+  rows.push(row('Shear cap',`${fmt(d.tauCap/1e6,2)} MPa`));
+  rows.push(row('Hot-flow stress σ',`${fmt(d.sigma/1e6,2)} MPa`));
+  rows.push(row('Contact regime',d.regime));
+  rows.push(row('Thermal dwell / shear time',`${fmt(d.tdwell,2)} / ${fmt(d.tshear,2)} s`));
+  rows.push(row('Surface speed at torque arm',`${fmt(d.surfaceSpeed,2)} m/s`));
+  rows.push(row('Estimated strain rate',`${fmt(d.edot,2)} s⁻¹`));
+  rows.push(row('Accumulated eq. strain',fmt(d.epsEq,2)));
+  rows.push(row('Work density proxy',`${fmt(d.workDensity,1)} MJ/m³`));
+  rows.push(row('Feedstock area used',`${fmt(d.Afeed,4)} mm²`));
+  rows.push(row('Feed speed used',`${fmt(d.feedSpeed,1)} mm/min`));
+  rows.push(row('Feed ratio Φ',fmt(d.phi,3)));
+  rows.push(row('n/v ratio',`${fmt(d.nOverV,3)} rpm/(mm/min)`));
+  rows.push(row('Jet Ueff / Re / h',`${fmt(d.cool.Ueff,1)} m/s / ${fmt(d.cool.Re,0)} / ${fmt(d.cool.hAvg,1)} W·m⁻²·K⁻¹`));
+  rows.push(row('Jet cooling total / AZ credit',`${fmt(d.cool.Pjet,1)} / ${fmt(d.cool.PcoolAZ,1)} W`));
+  rows.push(row('AZ cooling fraction',fmt(d.coolFrac,3)));
+  document.getElementById('selectedPanel').innerHTML=`<div class="status ${cls}">${d.pass?'Selected point: initially viable':'Selected point: '+labelCat(d.cat)}</div><div class="${box}">${reasons}</div><table style="margin-top:10px"><tr><th>Quantity</th><th>Value</th></tr>${rows.join('')}</table>`;
+}
+function updateWarnings(){
+  const v=state.vals, d=state.selected, msg=[];
+  if(v.contactModel==='rim'){
+    const areaRatio=d.Athermal/Math.max(d.Amech,1e-14);
+    if(areaRatio<3)msg.push('Rim mode thermal area is close to mechanical area. For a 1 mm rim this can overstate square-cube heating unless the true affected width is also ~1 mm.');
+    if(v.contactLen>v.D/2)msg.push('Mechanical contact length is large relative to the wheel radius. Check whether this is a true contact length or a thermal interaction length.');
+  }
+  if(v.contactModel==='annular')msg.push('Annular mode is preserved for your exported calibration, but it does not represent the pressure localization of a 1 mm wide wheel.');
+  if(v.Tmax>=v.solidus)msg.push('Upper AZ temperature is at or above the solidus estimate; lower it unless you intentionally want a near-melting boundary.');
+  if(v.feedMode==='fixed'&&d&&(d.phi<v.phiMin||d.phi>v.phiMax))msg.push('Selected fixed feed speed is outside your feed-balance bounds at the selected traverse speed.');
+  if(v.tractionMode==='stick')msg.push('Sticking traction mode can produce high torque/heat even at low average pressure. Use it only when torque data or surface evidence support near-sticking contact.');
+  if(v.heatEff>1.05)msg.push('Heat capture above ~1 implies the plastic heat factor or calibration is adding heat beyond spindle power; this can be useful as a calibration proxy but should be traceable to temperature data.');
+  if(v.coolingOn==='yes'&&v.jetH/Math.max(v.jetD,0.01)>4)msg.push('Jet standoff is more than four nozzle diameters; the close impinging-jet estimate may overpredict local cooling.');
+  if(v.coolingOn==='yes'&&d.cool.Pjet>=0.98*d.cool.Pcap&&d.cool.Pcap>0)msg.push('Jet cooling is capped by air heat capacity. Increasing cooled footprint or h will not increase heat removal unless air mass flow or allowed air temperature rise also increases.');
+  if(v.pMin===0&&v.pSigMin===0)msg.push('Pressure gates are currently permissive. For narrow-rim validation, consider setting either a minimum pressure or a minimum p/σflow once you have evidence for consolidation limits.');
+  document.getElementById('modelWarnings').innerHTML=msg.length?`<div class="warnBox">${msg.map(m=>'• '+m).join('<br>')}</div>`:`<div class="okBox">No obvious input inconsistencies detected.</div>`;
+}
+function makeCsv(){
+  const headers=['rpm','traverse_mm_min','pass','category','contact_model','T_AZ_C','torque_Nm','power_kW','gross_heat_input_J_mm','net_AZ_heat_input_J_mm','Fz_N','A_mech_mm2','A_thermal_mm2','pressure_MPa','p_over_sigma','tau_MPa','tau_coul_MPa','tau_cap_MPa','sigma_flow_MPa','regime','thermal_dwell_s','shear_time_s','surface_speed_m_s','strain_rate_s_1','eq_strain','work_density_MJ_m3','feed_area_mm2','feed_speed_mm_min','feed_ratio_phi','n_over_v','jet_Ueff_m_s','jet_Re','jet_h_W_m2K','jet_total_W','jet_AZ_credit_W','AZ_cooling_fraction','reasons'];
+  const rows=[headers.join(',')];
+  for(const d of state.grid){
+    const arr=[d.rpm,d.trav,d.pass,d.cat,d.modelLabel,d.T,d.M,d.P/1000,d.heatInputGross,d.heatInputNet,d.Fz,d.Amech*1e6,d.Athermal*1e6,d.p/1e6,d.pSig,d.tau/1e6,d.tauCoul/1e6,d.tauCap/1e6,d.sigma/1e6,d.regime,d.tdwell,d.tshear,d.surfaceSpeed,d.edot,d.epsEq,d.workDensity,d.Afeed,d.feedSpeed,d.phi,d.nOverV,d.cool.Ueff,d.cool.Re,d.cool.hAvg,d.cool.Pjet,d.cool.PcoolAZ,d.coolFrac,'"'+d.reasons.join('; ').replace(/"/g,'""')+'"'];
+    rows.push(arr.map(x=>typeof x==='number'?x.toPrecision(9):String(x).includes(',')?'"'+String(x).replace(/"/g,'""')+'"':x).join(','));
+  }
+  state.csv=rows.join('\n');
+}
+function exportCsv(){
+  const blob=new Blob([state.csv||''],{type:'text/csv'}), url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='fram_rim_jet_process_window_grid.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),500);
+}
+function mapClick(ev){
+  const rect=canvas.getBoundingClientRect(), x=(ev.clientX-rect.left)*canvas.width/rect.width, y=(ev.clientY-rect.top)*canvas.height/rect.height, m={l:75,r:25,t:30,b:70}, pw=canvas.width-m.l-m.r, ph=canvas.height-m.t-m.b;
+  if(x<m.l||x>m.l+pw||y<m.t||y>m.t+ph)return;
+  const v=state.vals, trav=v.travMin+(x-m.l)/pw*(v.travMax-v.travMin), rpm=v.rpmMin+(1-(y-m.t)/ph)*(v.rpmMax-v.rpmMin);
+  els.selTrav.value=Math.round(trav); els.selRpm.value=Math.round(rpm); recalc();
+}
+let debounce=null;
+function schedule(){clearTimeout(debounce); debounce=setTimeout(recalc,140);}
+document.querySelectorAll('[data-key]').forEach(el=>el.addEventListener('input',schedule));
+document.getElementById('recalcBtn').addEventListener('click',recalc);
+document.getElementById('loadExportBtn').addEventListener('click',()=>{setVals(exportedCalibration);recalc();});
+document.getElementById('loadRimBtn').addEventListener('click',()=>{setVals(rimJetDefaults);recalc();});
+document.getElementById('exportBtn').addEventListener('click',exportCsv);
+displayMode.addEventListener('change',drawMap); stableOverlay.addEventListener('change',drawMap); canvas.addEventListener('click',mapClick);
+setVals(rimJetDefaults); recalc();
+})();
+</script>
+</body>
+</html>

@@ -63,6 +63,9 @@ def _truthy(s) -> bool:
     return str(s).strip().lower() in ("1", "true", "yes", "y", "pass", "stable", "t")
 
 
+_NUMERIC_COLUMNS = tuple(c for c in REQUIRED_COLUMNS if c != "pass")
+
+
 def load_rows(csv_path: str) -> list[dict]:
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
@@ -71,7 +74,14 @@ def load_rows(csv_path: str) -> list[dict]:
             raise ValueError(
                 f"screener CSV {csv_path} missing required column(s): {missing} "
                 f"(needs at least {list(REQUIRED_COLUMNS)})")
-        return list(reader)
+        rows = list(reader)
+    # parse the consumed numeric columns ONCE: a real export is a ~7400-cell
+    # grid, and re-parsing strings in every ray scan made auto selection take
+    # seconds (float() on an already-float value stays a no-op for callers)
+    for r in rows:
+        for c in _NUMERIC_COLUMNS:
+            r[c] = float(r[c])
+    return rows
 
 
 def stable_rows(rows) -> list[dict]:
@@ -203,10 +213,29 @@ def select_operating_point(csv_path: str, mode: str = "auto",
             raise ValueError(f"no contiguous stable run within {tol} of revs/mm={target}")
         nv_star = target
     else:  # auto: the revs/mm ray with the widest CONTIGUOUS stable traverse run
+        # Same candidate set and iteration order as the naive per-stable-row
+        # scan (first max wins ties), but ray membership comes from a bisect
+        # window over nv-sorted rows and repeated nv candidates are cached —
+        # the naive version rescanned all rows per candidate, which took ~12 s
+        # on a real 7400-cell grid export.
+        import bisect
+
+        order = sorted(range(len(all_rows)), key=lambda i: _nv(all_rows[i]))
+        nv_sorted = [_nv(all_rows[i]) for i in order]
+
+        def members(nv0):
+            lo = bisect.bisect_left(nv_sorted, nv0 - tol)
+            hi = bisect.bisect_right(nv_sorted, nv0 + tol)
+            return [all_rows[order[j]] for j in range(lo, hi)]
+
+        cache: dict = {}
         best = None  # (span, nv_star, run)
         for r0 in stable:
             nv0 = _nv(r0)
-            run = ray_run(all_rows, nv0, tol)
+            if nv0 in cache:
+                run = cache[nv0]
+            else:
+                run = cache[nv0] = _widest_contiguous_run(members(nv0))
             if not run:
                 continue
             span = _trav(run[-1]) - _trav(run[0])

@@ -27,7 +27,16 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
   contiguous run stay highlighted for context; Apply pins exactly the
   displayed cell (WYSIWYG unchanged, verified end-to-end against the real
   CSV). Axes clamp to the measured data, rays clip to the window, and grid
-  data (> 40 rays) draws only the selected ray. 278 tests green.
+  data (> 40 rays) draws only the selected ray. The real export then REPLACED
+  the synthetic `screener_sample.csv` as THE screener fixture (user request):
+  the §5 selection tests recalibrated against probed real values (auto pick
+  nv≈30.31, run 623..1184 mm/min, rep cell RPM 22941 @ 904 mm/min; gap
+  exclusion on the nv≈29.08 ray whose cold cells break the low end), and the
+  end-to-end emit test asserts the real header. Auto selection on the 7 400-
+  cell grid took 12.4 s (per-stable-row candidates × full-table rescans with
+  fresh string parsing) — `load_rows` now parses numerics once and the
+  candidate loop uses an nv-sorted bisect window + per-nv cache: 3.0 s,
+  identical selection by construction. 278 tests green.
 - **Seam placement landed (PrusaSlicer port #3; D14).** `fill.seam_position:
   extreme | nearest | aligned | random` chooses each closed ring's start,
   constrained by the **winding seat window** (`seat_window` — all starts whose

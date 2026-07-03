@@ -4,7 +4,10 @@ import pytest
 
 from rotoforge_slicer.process.screener import select_operating_point
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "screener_sample.csv"
+# The REAL FRAM parameter-screener export (Al1100, 30 kRPM grid, ~7 400 cells) —
+# a rectangular RPM x traverse grid, which is what production data looks like.
+FIXTURE = (Path(__file__).resolve().parent / "fixtures" /
+           "fram_rim_jet_process_window_gridAl1100_30KRPM_300CW_60CB.csv")
 
 CSV = (
     "rpm,traverse_mm_min,pass,n_over_v,feed_speed_mm_min,feed_ratio_phi,torque_Nm,power_kW,T_AZ_C\n"
@@ -25,34 +28,50 @@ def test_auto_selects_widest_revs_per_mm_ray(tmp_path):
     assert op.v_grind_floor_mm_min == 90
 
 
-# ---- full §5.1-schema fixture (37 columns; only the needed ones are used) ----
+# ---- the real export (37 columns; only the needed ones are used) ----
+# Expected values probed from the fixture itself: the auto pick is the widest
+# CONTIGUOUS stable run over per-cell revs/mm candidates (nv ~ 30.31, traverse
+# window ~ 623..1184 mm/min, representative midpoint cell v=904 -> RPM 22941).
 
-def test_auto_picks_widest_contiguous_run():
-    op = select_operating_point(str(FIXTURE), mode="auto", tol=5)
-    assert op.revs_per_mm == 150                      # the widest contiguous ray
-    assert op.v_min_mm_min == 60 and op.v_max_mm_min == 140
-    assert op.rpm == 15000                            # representative cell at v=100
-    assert op.v_grind_floor_mm_min == 60
+@pytest.fixture(scope="module")
+def auto_op():
+    # auto selection walks ~3700 candidate rays over ~7400 cells (~seconds on
+    # the real grid) — computed once for every test that reads it
+    return select_operating_point(str(FIXTURE), mode="auto", tol=5)
+
+
+def test_auto_picks_widest_contiguous_run(auto_op):
+    op = auto_op
+    assert op.revs_per_mm == pytest.approx(30.3106845)   # widest contiguous ray
+    assert op.v_min_mm_min == pytest.approx(623.529412)
+    assert op.v_max_mm_min == pytest.approx(1184.47059)
+    assert op.rpm == 22941                               # rep cell at v=904 (midpoint)
+    assert op.traverse_mm_min == pytest.approx(904.0)
+    assert op.v_grind_floor_mm_min == pytest.approx(623.529412)
 
 
 def test_manual_excludes_unstable_gap():
-    # the nv=100 ray has an UNSTABLE cell at v=80, so the contiguous run is [50,70],
-    # not the full stable span [50,90] — the band must not cross the unstable gap.
-    op = select_operating_point(str(FIXTURE), mode="manual", target=100.0, tol=5)
-    assert op.revs_per_mm == 100.0
-    assert op.v_min_mm_min == 50 and op.v_max_mm_min == 70
+    # the nv~29.08 ray's stable cells span [395.6, 1237.1] mm/min, but unstable
+    # (cold) cells break the low end — the contiguous run is [693.6, 1237.1];
+    # the band must not cross the unstable gap.
+    op = select_operating_point(str(FIXTURE), mode="manual", target=29.075798, tol=5)
+    assert op.v_min_mm_min == pytest.approx(693.647, abs=0.01)
+    assert op.v_max_mm_min == pytest.approx(1237.06, abs=0.01)
+    assert op.v_min_mm_min > 500.0, \
+        "the run must exclude the stable cells below the unstable gap (395.6..)"
 
 
 def test_manual_no_match_raises():
     with pytest.raises(ValueError):
-        select_operating_point(str(FIXTURE), mode="manual", target=999.0, tol=5)
+        select_operating_point(str(FIXTURE), mode="manual", target=1e6, tol=5)
 
 
-def test_full_schema_parse_uses_only_needed_columns():
-    op = select_operating_point(str(FIXTURE), mode="auto", tol=5)
-    assert op.feed_speed_mm_min == 130 and op.phi == 1.3   # rep cell (v=100, feed=1.3v)
+def test_full_schema_parse_uses_only_needed_columns(auto_op):
+    op = auto_op
+    assert op.feed_speed_mm_min == pytest.approx(2373.2135)   # rep cell wire feed
+    assert op.phi == pytest.approx(1.0)
     assert op.t_az_c > 0 and op.torque_Nm > 0
-    assert "revs/mm=150" in op.summary()
+    assert "revs/mm=30.3" in op.summary()
 
 
 # ---- contiguity actually changes the winner (vs the old max-min span) ----
@@ -102,8 +121,8 @@ def test_select_rejects_rpm_outside_superpid(tmp_path):
 def test_rpm_for_clamps_to_window():
     op = select_operating_point(str(FIXTURE), mode="auto", tol=5,
                                 rpm_min=5000, rpm_max=30000)
-    assert op.rpm_for(1000) == 30000   # 150*1000 -> clamped down
-    assert op.rpm_for(10) == 5000      # 150*10   -> clamped up
+    assert op.rpm_for(1000) == 30000   # 30.31*1000 = 30311 -> clamped down
+    assert op.rpm_for(10) == 5000      # 30.31*10   = 303   -> clamped up
 
 
 def test_missing_required_column_raises(tmp_path):
