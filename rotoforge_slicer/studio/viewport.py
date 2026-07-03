@@ -86,6 +86,18 @@ class BuildPlateScene:
         for key in list(self._part_actors):
             if key not in alive:
                 self.plotter.remove_actor(self._part_actors.pop(key))
+        self.set_parts_display(self._parts_mode)
+
+    _parts_mode = "normal"
+
+    def set_parts_display(self, mode: str) -> None:
+        """Part visibility for the Prepare/Preview split (PrusaSlicer semantics):
+        ``normal`` (Prepare), ``hidden`` (Preview — the mesh must not occlude the
+        toolpath), or ``ghost`` (Preview with the model-shells toggle)."""
+        self._parts_mode = mode
+        for actor in self._part_actors.values():
+            actor.SetVisibility(mode != "hidden")
+            actor.GetProperty().SetOpacity(0.18 if mode == "ghost" else 1.0)
 
     # ---- toolpath --------------------------------------------------------------
 

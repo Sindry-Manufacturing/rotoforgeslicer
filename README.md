@@ -55,6 +55,14 @@ and RPM / traverse / revs-per-mm / E readouts, airborne dwells included. Launch 
 `python -m rotoforge_slicer.studio [mesh.stl ...]` — or just the frozen exe, which
 starts the studio by default.
 
+**PrusaSlicer-style preview + auto heading:** Preview hides the mesh so the
+toolpath is always visible (optional ghost "model shells"), with a vertical
+dual-handle **layer range slider** and a horizontal **move slider** that reveals
+the top layer move-by-move. The planner picks a **per-region hatch heading**
+(`fill.auto_heading`) — raster scores candidate directions on the actual clipped
+hatch (legacy +Y always a candidate), streamline biases along the region's long
+axis — so thin ribs fill lengthwise instead of shattering into rib-width crossings.
+
 **M17 contour tracing + graphical process window + QoL:** `fill/contour.py` traces
 concentric perimeter walls (modes `contour` / `outline`, or `perimeter_loops` walls
 around raster/streamline infill) with the D13 rotational-extreme start — a full

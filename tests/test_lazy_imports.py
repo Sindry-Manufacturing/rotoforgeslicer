@@ -53,6 +53,7 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.studio.viewport
     import rotoforge_slicer.studio.app
     import rotoforge_slicer.studio.materials
+    import rotoforge_slicer.studio.widgets
     import rotoforge_slicer.studio.screener_plot
     import rotoforge_slicer.studio.screener_panel
 

@@ -118,6 +118,9 @@ def test_studio_window_constructs_offscreen():
         "assert w.f_mode.count() == 4\n"          # raster/streamline/contour/outline
         "assert len(w.adv_widgets) >= 12\n"       # advanced parameters exposed
         "assert w.f_loops is not None and w.dims_lbl is not None\n"
+        "assert w.layer_range is not None and not w.layer_range.isVisible()\n"
+        "assert w.layer_range.clamp(7, 2, 0, 5) == (2, 5)\n"   # order + clamp
+        "assert w.move_slider is not None and w.shells_cb is not None\n"
         "w.close()\n"
         "print('STUDIO_OK')\n"
     )

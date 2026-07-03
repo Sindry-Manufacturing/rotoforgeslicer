@@ -36,6 +36,7 @@ ADVANCED_FIELDS = (
     ("Z feed (mm/min)", "emit.feed_z_mm_min", 50.0, 2000.0, 10.0, 0),
     ("Deposition feed fallback (mm/min)", "emit.feed_dep_mm_min", 10.0, 2000.0, 10.0, 0),
     ("C-axis slew ω_C (deg/s)", "c_axis.max_speed_deg_s", 0.0, 2000.0, 10.0, 0),
+    ("Corner scrub budget (deg·mm)", "c_axis.max_scrub_deg_mm", 0.0, 2000.0, 10.0, 0),
     ("Collision clearance (mm)", "collision.clearance_mm", 0.0, 5.0, 0.1, 2),
     ("Collision wire lead (mm)", "collision.wire_lead_mm", 0.0, 10.0, 0.5, 1),
     ("Crosshatch angle (deg)", "fill.crosshatch_angle_deg", 0.0, 90.0, 5.0, 1),
@@ -114,6 +115,8 @@ def _build_studio_window():
             self.selected = None
             self.preview = None
             self.timeline = []
+            self._layer_moves = {}
+            self._move_index = []
             self.sim_t = 0.0
             self.playing = False
             self.csv_path = None
@@ -264,13 +267,19 @@ def _build_studio_window():
             scroll = QtWidgets.QScrollArea()
             scroll.setWidget(left)
             scroll.setWidgetResizable(True)
-            scroll.setMaximumWidth(390)
-            scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            scroll.setMinimumWidth(300)           # user-resizable via the splitter
+            scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
             split.addWidget(scroll)
 
-            # ---- right: 3D viewport + mode tabs + log ----
-            right = QtWidgets.QWidget()
-            rlyt = QtWidgets.QVBoxLayout(right)
+            # ---- right: viewport (+layer range slider) / tabs / log, all in a
+            # vertical splitter so nothing is ever cut off — drag the boundaries.
+            from .widgets import make_layer_range_slider
+
+            right = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+
+            view_w = QtWidgets.QWidget()
+            vwl = QtWidgets.QVBoxLayout(view_w)
+            vwl.setContentsMargins(0, 0, 0, 0)
             vrow = QtWidgets.QHBoxLayout()          # camera presets (M11 QoL)
             for text, slot in (("Top", lambda: self._view_preset("xy")),
                                ("Front", lambda: self._view_preset("xz")),
@@ -282,8 +291,10 @@ def _build_studio_window():
                 b.clicked.connect(slot)
                 vrow.addWidget(b)
             vrow.addStretch(1)
-            rlyt.addLayout(vrow)
-            self.interactor = QtInteractor(right)
+            vwl.addLayout(vrow)
+
+            hview = QtWidgets.QHBoxLayout()
+            self.interactor = QtInteractor(view_w)
             self.view = BuildPlateScene(plotter=self.interactor)
             self.view.draw_plate(self.cfg)
             # Double-click only: single left-press also starts a camera-orbit drag,
@@ -294,10 +305,31 @@ def _build_studio_window():
             # drags that start on empty plate
             self._drag = None
             self._install_drag_handlers()
-            rlyt.addWidget(self.interactor, stretch=1)
+            hview.addWidget(self.interactor, stretch=1)
+            # PrusaSlicer-style vertical dual-handle layer range slider
+            self.layer_range = make_layer_range_slider(view_w)
+            self.layer_range.rangeChanged.connect(self._on_layer_range)
+            self.layer_range.setVisible(False)
+            hview.addWidget(self.layer_range)
+            vwl.addLayout(hview, stretch=1)
+
+            # PrusaSlicer-style horizontal move slider: scrubs the moves of the TOP
+            # visible layer, progressively revealing its toolpath.
+            self.move_row = QtWidgets.QWidget()
+            mrow = QtWidgets.QHBoxLayout(self.move_row)
+            mrow.setContentsMargins(0, 0, 0, 0)
+            mrow.addWidget(QtWidgets.QLabel("Moves"))
+            self.move_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            self.move_slider.valueChanged.connect(self._refresh_toolpath)
+            self.move_lbl = QtWidgets.QLabel("—")
+            mrow.addWidget(self.move_slider, stretch=1)
+            mrow.addWidget(self.move_lbl)
+            self.move_row.setVisible(False)
+            vwl.addWidget(self.move_row)
+            right.addWidget(view_w)
 
             self.tabs = QtWidgets.QTabWidget()
-            self.tabs.setMaximumHeight(170)
+            self.tabs.currentChanged.connect(self._on_mode_changed)
 
             prep = QtWidgets.QWidget()
             pl2 = QtWidgets.QVBoxLayout(prep)
@@ -319,17 +351,19 @@ def _build_studio_window():
             self.toggles = {}
             for name in TOGGLE_ORDER:
                 cb = QtWidgets.QCheckBox(name)
-                cb.setChecked(True)
+                # deposition-focused by default (PrusaSlicer semantics): the
+                # auxiliary move classes clutter the view — flip them on as needed
+                cb.setChecked(name == "deposition")
                 cb.stateChanged.connect(self._refresh_toolpath)
                 self.toggles[name] = cb
                 trow.addWidget(cb)
+            self.shells_cb = QtWidgets.QCheckBox("model shells")
+            self.shells_cb.setChecked(False)      # Preview shows PATHS, not the mesh
+            self.shells_cb.stateChanged.connect(lambda *_: self._on_mode_changed(
+                self.tabs.currentIndex()))
+            trow.addWidget(self.shells_cb)
             trow.addStretch(1)
-            trow.addWidget(QtWidgets.QLabel("Layers up to"))
-            self.layer_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-            self.layer_slider.setEnabled(False)
-            self.layer_slider.valueChanged.connect(self._refresh_toolpath)
             self.layer_lbl = QtWidgets.QLabel("—")
-            trow.addWidget(self.layer_slider, stretch=1)
             trow.addWidget(self.layer_lbl)
             vl.addLayout(trow)
 
@@ -353,19 +387,27 @@ def _build_studio_window():
 
             self.readout = QtWidgets.QLabel("slice to enable the simulation")
             self.readout.setStyleSheet("font-family: Consolas, monospace;")
+            self.readout.setWordWrap(True)
             vl.addWidget(self.readout)
             self.tabs.addTab(prev, "Preview")
-            rlyt.addWidget(self.tabs)
+            right.addWidget(self.tabs)
 
+            bottom = QtWidgets.QWidget()
+            blyt = QtWidgets.QVBoxLayout(bottom)
+            blyt.setContentsMargins(0, 0, 0, 0)
             self.progress = QtWidgets.QProgressBar()
             self.progress.setRange(0, 100)
-            rlyt.addWidget(self.progress)
+            blyt.addWidget(self.progress)
             self.log = QtWidgets.QPlainTextEdit()
             self.log.setReadOnly(True)
-            self.log.setMaximumHeight(110)
-            rlyt.addWidget(self.log)
+            blyt.addWidget(self.log)
+            right.addWidget(bottom)
+
+            right.setStretchFactor(0, 1)          # the viewport gets spare space
+            right.setSizes([560, 170, 130])       # initial; every boundary draggable
             split.addWidget(right)
             split.setStretchFactor(1, 1)
+            split.setSizes([360, 1040])
 
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(_TICK_MS)
@@ -700,32 +742,78 @@ def _build_studio_window():
             # simulation against THAT, not the possibly-edited live cfg
             self.timeline = build_timeline(preview.segments, preview.plan, preview.cfg)
             self.sim_t = 0.0
-            nlayers = len(preview.plan.layers)
-            self.layer_slider.blockSignals(True)
-            self.layer_slider.setRange(0, max(0, nlayers - 1))
-            self.layer_slider.setValue(max(0, nlayers - 1))
-            self.layer_slider.setEnabled(True)
-            self.layer_slider.blockSignals(False)
+            # per-layer move indices for the PrusaSlicer-style sliders: each segment
+            # gets its ordinal within its layer (segments are in machine order)
+            self._layer_moves = {}
+            self._move_index = []
+            for s in preview.segments:
+                k = s.layer_index if s.layer_index is not None else -1
+                self._move_index.append(self._layer_moves.get(k, 0))
+                self._layer_moves[k] = self._layer_moves.get(k, 0) + 1
+            max_layer = max((k for k in self._layer_moves if k >= 0), default=0)
+            self.layer_range.setMaximum(max_layer)
+            self.layer_range.setRange_(0, max_layer, emit=False)
+            self._sync_move_slider()
             self.time_slider.setEnabled(bool(self.timeline))
             self.btn_play.setEnabled(bool(self.timeline))
-            self.tabs.setCurrentIndex(1)
-            self._refresh_toolpath()
-            if preview.collisions:
-                self.view.show_collisions(preview.collisions)
+            if self.tabs.currentIndex() == 1:
+                self._on_mode_changed(1)          # already in Preview: refresh now
+            else:
+                self.tabs.setCurrentIndex(1)      # fires _on_mode_changed
             self._update_sim_display()
 
         # ---- preview / simulation --------------------------------------------------
 
+        def _on_mode_changed(self, index):
+            """Prepare shows the MODEL; Preview shows the TOOLPATH (PrusaSlicer
+            semantics — the mesh must never occlude the paths; 'model shells'
+            optionally ghosts it back in)."""
+            preview_mode = index == 1 and self.preview is not None
+            self.layer_range.setVisible(preview_mode)
+            self.move_row.setVisible(preview_mode)
+            if preview_mode:
+                self.view.set_parts_display(
+                    "ghost" if self.shells_cb.isChecked() else "hidden")
+                self._refresh_toolpath()
+            else:
+                self.view.set_parts_display("normal")
+                self.view.clear_toolpath()
+                self.view.clear_head()
+            self.interactor.update()
+
+        def _sync_move_slider(self):
+            """Point the move slider at the TOP visible layer's move count."""
+            hi = self.layer_range.high()
+            n = self._layer_moves.get(hi, 0)
+            self.move_slider.blockSignals(True)
+            self.move_slider.setRange(0, max(0, n))
+            self.move_slider.setValue(n)
+            self.move_slider.blockSignals(False)
+
+        def _on_layer_range(self, lo, hi):
+            self._sync_move_slider()
+            self._refresh_toolpath()
+
         def _refresh_toolpath(self, *_):
-            if not self.preview:
+            if not self.preview or self.tabs.currentIndex() != 1:
                 return
+            lo, hi = self.layer_range.low(), self.layer_range.high()
+            upto_move = self.move_slider.value()
+            shown = []
+            for s, mi in zip(self.preview.segments, self._move_index):
+                k = s.layer_index if s.layer_index is not None else -1
+                if k < lo or k > hi:
+                    continue
+                if k == hi and mi >= upto_move:
+                    continue                      # top layer revealed move-by-move
+                shown.append(s)
             enabled = {n for n, cb in self.toggles.items() if cb.isChecked()}
-            upto = self.layer_slider.value() if self.layer_slider.isEnabled() else None
-            self.view.show_toolpath(self.preview.segments, enabled=enabled,
-                                    upto_layer=upto)
+            self.view.show_toolpath(shown, enabled=enabled)
             if self.preview.collisions:
                 self.view.show_collisions(self.preview.collisions)
-            self.layer_lbl.setText(f"{upto}" if upto is not None else "—")
+            self.layer_lbl.setText(
+                f"layers {lo}–{hi}   move {upto_move}/{self._layer_moves.get(hi, 0)}")
+            self.move_lbl.setText(f"{upto_move}/{self._layer_moves.get(hi, 0)}")
             self.interactor.update()
 
         def _set_playing(self, playing: bool):

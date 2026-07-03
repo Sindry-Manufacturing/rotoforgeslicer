@@ -15,6 +15,30 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Over-segmentation fixed with real-part data (user's Y-axis bracket gcode+STL).**
+  Diagnosis: (1) the fixed +Y hatch/bias chops regions that don't align with +Y —
+  thin ribs became rib-width crossings (their gcode: 14 286 passes, p50 13 mm, and
+  a 40 mm rib perpendicular to +Y used to produce NOTHING — every 3 mm crossing
+  dropped below min_deposit_len); (2) the 15° flat heading-step rule conflated
+  corner sharpness with sampling density and shredded legally-tight streamlines
+  (30% of bead dropped on a test layer). Fixes: **per-region auto heading**
+  (`fill.auto_heading`, default on — raster SCORES candidate directions on the
+  actual clipped hatch with legacy +Y always a candidate, so coverage never
+  regresses; streamline biases along the region's long axis: measured ~33% fewer
+  passes and far less overlap at equal coverage), and the step rule became a
+  **scrub budget** `c_axis.max_scrub_deg_mm` (step × next-segment length, plus an
+  ω-feasibility bound) — corners (90°×19 mm = 1710) split, sampled curves
+  (14°×6 mm = 87) pass.
+- **PrusaSlicer-style preview (GPL-ok wholesale copy of the UX).** Preview now
+  HIDES the model (the mesh no longer occludes paths; a "model shells" toggle
+  ghosts it back at 18%), with a **vertical dual-handle layer-range slider** beside
+  the viewport (drag either handle, or the window between them) and a **horizontal
+  move slider** revealing the top visible layer move-by-move. Move-class toggles
+  default to deposition-only. Prepare shows the model, Preview shows the paths.
+- **Resizable UI.** The right side is a vertical splitter (viewport / controls /
+  log — every boundary draggable), the left panel scrolls and resizes via the main
+  splitter, readouts word-wrap; nothing is clipped at small window sizes. 194
+  tests green.
 - **Adversarial review of M17/screener/QoL — 13 defect classes fixed.** The big ones:
   **(1) corner scrubbing (hardware-critical):** sharp polygon corners slipped past the
   circumradius proxy while the firmware interpolates the A step across the whole next
