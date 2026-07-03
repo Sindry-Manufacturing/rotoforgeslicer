@@ -343,7 +343,8 @@ def _curved_passes(paths, layer_z, cfg: Config, op: OperatingPoint,
     v_s = op.traverse_mm_min / 60.0
     out: List[Pass] = []
     for path in paths:
-        for sub_s in split_on_heading_step(path, cfg.c_axis.max_heading_step_deg):
+        for sub_s in split_on_heading_step(path, v_s, cfg.c_axis.max_speed_deg_s,
+                                           cfg.c_axis.max_scrub_deg_mm):
             for sub_r in split_unreachable(sub_s, cfg.c_axis):
                 for sub_c in split_on_curvature(sub_r, v_s, cfg.c_axis.max_speed_deg_s):
                     for sub in split_on_winding(sub_c, cfg.c_axis):
@@ -383,6 +384,7 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
 
     # infill modes (raster | streamline), optionally wrapped by perimeter walls
     from ..fill.contour import inset_interior, perimeter_paths
+    from ..fill.raster import best_heading_deg, dominant_heading_deg
 
     loops = cfg.fill.perimeter_loops
     wall_passes: List[Pass] = []
@@ -396,18 +398,35 @@ def plan_layer(layer, cfg: Config, *, operating_point: OperatingPoint,
         if infill_region.is_empty:
             continue
 
+        # Per-region heading (D13: no privileged direction — the choice is free):
+        # * raster: SCORE candidate directions on the actual clipped hatch and take
+        #   the winner (most kept bead, then fewest pieces); legacy +Y is always a
+        #   candidate, so coverage never regresses.
+        # * streamline: bias along the region's LONG AXIS — the guidance field
+        #   bends toward boundaries, so aligning the bias with the dominant axis
+        #   complements the curl (measured on real bracket geometry: about a third
+        #   fewer passes and much less overlap at equal coverage; a straight-hatch
+        #   score is a poor proxy for a boundary-following field).
+        # The layer's crosshatch delta applies on top of the auto choice.
+        if cfg.fill.auto_heading:
+            base = (dominant_heading_deg(infill_region) if mode == "streamline"
+                    else best_heading_deg(infill_region, cfg, min_len))
+            region_heading = (base + (heading_deg - 90.0)) % 360.0
+        else:
+            region_heading = heading_deg
+
         if mode == "streamline":
             from ..fill.streamline import streamline_fill
 
             region_passes = _curved_passes(
-                streamline_fill(infill_region, cfg, heading_deg=heading_deg),
+                streamline_fill(infill_region, cfg, heading_deg=region_heading),
                 layer.z, cfg, op, e_per_path)
             # streamlines have no inherent order: lead away from laid material (§4.6)
             passes.extend(order_passes_lead_away(region_passes))
         else:  # raster
             pitch = raster_pitch(cfg)
             for start, end in raster_lines(infill_region, pitch,
-                                           heading_deg=heading_deg, min_len=min_len,
+                                           heading_deg=region_heading, min_len=min_len,
                                            bidirectional=cfg.fill.raster_bidirectional):
                 passes.append(Pass(
                     start=start, end=end, z=layer.z,

@@ -56,28 +56,47 @@ def heading_step_deg(p0, p1, p2) -> float:
     return abs((t1 - t0 + 180.0) % 360.0 - 180.0)
 
 
-def split_on_heading_step(path_xy, max_step_deg: float):
-    """Split a polyline at vertices whose DISCRETE heading step exceeds
-    ``max_step_deg`` (SPEC §4.3 / D13 corner rule).
+def vertex_step_ok(step_deg: float, l_next_mm: float, v_mm_s: float,
+                   omega_max_deg_s: float, budget_deg_mm: float) -> bool:
+    """Is a discrete per-vertex heading step physically acceptable in contact?
 
-    The circumradius proxy scales with segment length, so a dead-sharp corner
-    between long legs (true turn radius 0) reads as a huge radius and slips past
-    ``split_on_curvature`` — yet the emitter commands the new A on the NEXT G1 and
-    the firmware interpolates the whole rotation across that in-contact segment:
-    the wheel runs up to the full step off the travel tangent (drift violation —
-    side-scrubbing). Any vertex turn sharper than ``max_step_deg`` must become an
-    airborne lift-reorient-replunge. Densely-sampled smooth curves (streamlines,
-    contour rings) step a few degrees per vertex and pass untouched; polygon
-    corners split. ``max_step_deg <= 0`` disables the rule (legacy behavior).
+    The emitter puts the new A on the NEXT G1, and the firmware interpolates the
+    rotation linearly across that in-contact segment. Two independent bounds:
+
+    * **feasibility** — the axis must complete the turn within the segment:
+      ``step ≤ ω · L_next / v`` (with ω uncalibrated the bound is off);
+    * **scrub budget** — while interpolating, the wheel runs off-tangent by up to
+      the step for up to the segment length, so the *product* ``step · L_next``
+      bounds the off-tangent contact. Fine sampling of a legal curve (small step,
+      tiny segment) passes; a polygon corner (large step, long leg) fails even
+      though the circumradius proxy — which scales with leg length — reads it as
+      a gentle turn.
+
+    ``budget_deg_mm <= 0`` disables the scrub bound (legacy behavior).
     """
+    if omega_max_deg_s > 0 and v_mm_s > 0 and \
+            step_deg > omega_max_deg_s * l_next_mm / v_mm_s + 1e-9:
+        return False
+    if budget_deg_mm > 0 and step_deg * l_next_mm > budget_deg_mm + 1e-9:
+        return False
+    return True
+
+
+def split_on_heading_step(path_xy, v_mm_s: float, omega_max_deg_s: float,
+                          budget_deg_mm: float):
+    """Split a polyline at vertices whose discrete heading step fails
+    :func:`vertex_step_ok` (SPEC §4.3 / D13 corner rule) — the break becomes an
+    airborne lift-reorient-replunge."""
     pts = list(path_xy)
-    if max_step_deg <= 0 or len(pts) < 3:
+    if len(pts) < 3:
         return [pts] if len(pts) >= 2 else []
     out = []
     cur = [pts[0]]
     for i in range(1, len(pts) - 1):
         cur.append(pts[i])
-        if heading_step_deg(pts[i - 1], pts[i], pts[i + 1]) > max_step_deg:
+        step = heading_step_deg(pts[i - 1], pts[i], pts[i + 1])
+        l_next = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+        if not vertex_step_ok(step, l_next, v_mm_s, omega_max_deg_s, budget_deg_mm):
             out.append(cur)            # break AT the sharp vertex
             cur = [pts[i]]
     cur.append(pts[-1])

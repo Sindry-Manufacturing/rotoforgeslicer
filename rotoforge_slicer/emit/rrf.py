@@ -315,21 +315,29 @@ class GCodeEmitter:
         a_segs = p.axis_angles(cfg.c_axis)
         for a in a_segs:
             validate_axis_angle(a, cfg.c_axis)
-        # Per-vertex A step limit: the firmware interpolates each step across the NEXT
-        # in-contact segment, so a sharp corner (large discrete step, any leg length)
-        # is sustained off-tangent contact — side-scrubbing. The planner splits these
-        # (split_on_heading_step); prove it here. With the limit disabled (<= 0) fall
-        # back to the absolute rule: a step that REACHES ±180 is a hairpin cusp, never
-        # a valid single G1. (Strict `> 180+eps` would miss the exact-180° reversal.)
-        step_limit = cfg.c_axis.max_heading_step_deg
-        max_step = (step_limit + 1e-6) if step_limit > 0 else (180.0 - 1e-6)
-        for a0, a1 in zip(a_segs, a_segs[1:]):
-            if abs(a1 - a0) > max_step:
+        # Per-vertex A step rule (mirrors fill.curvature.vertex_step_ok): the
+        # firmware interpolates each step across the NEXT in-contact segment, so
+        # the step must be axis-feasible over that segment AND the step×length
+        # scrub product must stay within budget — a sharp corner on long legs is
+        # sustained off-tangent contact even when the circumradius proxy reads it
+        # as gentle. The planner splits these (split_on_heading_step); prove it
+        # here. A step that REACHES ±180 is a hairpin cusp, never a valid single
+        # G1, regardless of budget. (Strict `> 180+eps` would miss the exact-180°.)
+        from ..fill.curvature import vertex_step_ok
+
+        v_s = v_mm_min / 60.0
+        pts = p.points
+        for i, (a0, a1) in enumerate(zip(a_segs, a_segs[1:])):
+            step = abs(a1 - a0)
+            l_next = math.hypot(pts[i + 2][0] - pts[i + 1][0],
+                                pts[i + 2][1] - pts[i + 1][1])
+            if step > 180.0 - 1e-6 or not vertex_step_ok(
+                    step - 1e-6, l_next, v_s, cfg.c_axis.max_speed_deg_s,
+                    cfg.c_axis.max_scrub_deg_mm):
                 raise ValueError(
-                    f"A axis steps {a1 - a0:.1f} deg between deposition segments — an "
-                    f"in-contact turn sharper than the {max_step:.1f} deg limit is "
-                    "off-tangent scrubbing; split it with an airborne reorient "
-                    "(SPEC §4.3 / D13)")
+                    f"A axis steps {a1 - a0:.1f} deg into a {l_next:.1f} mm in-contact "
+                    "segment — infeasible or over the scrub budget; split it with an "
+                    "airborne reorient (SPEC §4.3 / D13)")
         r_floor = r_min(v_mm_min / 60.0, cfg.c_axis.max_speed_deg_s)
         if r_floor < math.inf and p.min_radius_mm < r_floor - 1e-9:
             raise ValueError(

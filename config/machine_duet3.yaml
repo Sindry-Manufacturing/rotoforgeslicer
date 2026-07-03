@@ -23,8 +23,10 @@ c_axis:
   a_max_deg: 180                 # >>> set to the REAL measured range; decides closed-loop-in-one-pass
   max_speed_deg_s: 360.0         # omega_C, measured on hardware: 360 deg/s -> R_min = v/omega
   max_drift_deg: 0.0             # allowed transient heading lag on curves (keep 0 unless tuned)
-  max_heading_step_deg: 15.0     # max discrete per-vertex heading step in contact; sharper corners
-                                 # become airborne reorients (a sharp corner is NOT a followable turn)
+  max_scrub_deg_mm: 200.0        # per-vertex scrub budget: heading step [deg] x next segment [mm].
+                                 # Sharp corners on long legs (90deg x 19mm = 1710) split into
+                                 # airborne reorients; sampled legal curves (14deg x 6mm = 87)
+                                 # pass. Calibrate to observed bead quality. (0 = disabled)
 
 spindle:
   rpm_min: 5000
@@ -78,6 +80,8 @@ collision:                       # 2.5D swept-disc + leading-wire check (SPEC §
 
 fill:                            # fill strategy (SPEC §4.2)
   mode: raster                   # raster | streamline | contour | outline (M17)
+  auto_heading: true             # per-region heading = the region's long axis (D13: no
+                                 # privileged direction) -- thin ribs fill lengthwise
   crosshatch: false              # alternate the deposition heading between layers
   crosshatch_angle_deg: 30.0     # +/- heading offset on alternating layers (any angle; no wedge -- D13)
   streamline_step_mm: 0.5        # streamline integration step

@@ -39,8 +39,11 @@ class CAxisCfg:
     a_max_deg: float = 180.0            # set to the real measured range; decides closed-loop-in-one-pass
     max_speed_deg_s: float = 0.0         # omega_C; sets the slew/curvature limit R = v / omega
     max_drift_deg: float = 0.0           # allowed transient heading lag on curves (keep 0 unless tuned)
-    max_heading_step_deg: float = 15.0   # max DISCRETE per-vertex heading step in contact; sharper
-                                         # corners split into airborne reorients (0 = disabled)
+    max_scrub_deg_mm: float = 200.0      # per-vertex scrub budget: heading step [deg] x following
+                                         # segment [mm] — firmware interpolates the step across that
+                                         # segment, so the product bounds off-tangent contact. Big
+                                         # corner steps on long legs split into airborne reorients;
+                                         # fine sampling of legal curves passes. (0 = disabled)
 
 
 @dataclass
@@ -73,6 +76,8 @@ class ProcessCfg:
 class FillCfg:
     """Fill strategy (SPEC §4.2)."""
     mode: str = "raster"                 # raster | streamline | contour | outline (M17)
+    auto_heading: bool = True            # per-region hatch/bias heading = the region's long axis
+                                         # (D13: no privileged direction) — thin ribs fill lengthwise
     raster_bidirectional: bool = True    # alternate heading 180 deg between lines (D13; no fly-back)
     crosshatch: bool = False             # alternate the heading between layers
     crosshatch_angle_deg: float = 30.0   # +/- heading offset on alternating layers (any angle; no wedge)

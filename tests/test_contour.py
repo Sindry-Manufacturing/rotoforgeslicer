@@ -151,16 +151,17 @@ def test_perimeter_loops_walls_plus_inset_raster():
     sq = _square(half=12.0)
     lp = plan_layer(Layer(0, 0.06, [sq]), cfg, operating_point=_op(cfg), e_per_path=1.0)
     inset = inset_interior(sq, cfg, 2)
-    ix0, _, ix1, _ = inset.bounds
     # square wall rings split at their corners (heading-step rule) into straight
-    # sides; a raster hatch line is vertical AND inside the inset interior.
+    # sides on the wall centrelines; hatch lines live INSIDE the inset interior
+    # (their heading is free — auto_heading picks the best-scoring direction).
+    from shapely.geometry import Point as _P
+
     def is_hatch(p):
-        return (abs(p.start[0] - p.end[0]) < 1e-6
-                and ix0 - 1e-6 <= p.start[0] <= ix1 + 1e-6)
+        mid = ((p.start[0] + p.end[0]) / 2, (p.start[1] + p.end[1]) / 2)
+        return inset.buffer(1e-6).contains(_P(mid))
     hatch = [p for p in lp.passes if is_hatch(p)]
     walls = [p for p in lp.passes if not is_hatch(p)]
     assert hatch and walls                                     # both kinds present
-    assert any(abs(p.start[1] - p.end[1]) < 1e-6 for p in walls)  # horizontal sides
     assert not is_hatch(lp.passes[-1])                         # walls deposited last
 
 
@@ -181,22 +182,37 @@ def test_open_path_returned_unchanged_by_extreme_rotation():
 def test_sharp_corners_split_into_airborne_reorients():
     # review fix (hardware): a dead-sharp corner between long legs slips past the
     # circumradius proxy, but the firmware would interpolate the A step across the
-    # whole next in-contact segment — off-tangent scrubbing. Corners sharper than
-    # max_heading_step_deg must break the pass.
-    from rotoforge_slicer.fill.curvature import split_on_heading_step
+    # whole next in-contact segment — the step×length SCRUB product must stay in
+    # budget, while fine sampling of a legal curve passes untouched.
+    from rotoforge_slicer.fill.curvature import (
+        split_on_heading_step, vertex_step_ok,
+    )
 
+    v_s, omega, budget = 2.0, 360.0, 60.0
     square_ring = [(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)]
-    subs = split_on_heading_step(square_ring, 15.0)
+    subs = split_on_heading_step(square_ring, v_s, omega, budget)
     assert len(subs) == 4                                      # one pass per side
-    assert split_on_heading_step(square_ring, 0.0) == [square_ring]  # disabled
+    # disabled budget + generous slew: corners survive (legacy behavior)
+    assert split_on_heading_step(square_ring, v_s, 0.0, 0.0) == [square_ring]
+
+    # sampling-density honesty: 30 deg over a 0.5 mm next segment (dense legal
+    # curve) is fine; the SAME step into a 20 mm leg (a real corner) is not.
+    assert vertex_step_ok(30.0, 0.5, v_s, omega, budget)
+    assert not vertex_step_ok(30.0, 20.0, v_s, omega, budget)
+    # feasibility: the axis cannot turn 120 deg within a 0.5 mm segment at 2 mm/s
+    assert not vertex_step_ok(120.0, 0.5, v_s, omega, budget)
 
     cfg = _cfg(mode="outline")
     lp = plan_layer(Layer(0, 0.06, [_square(half=10.0)]), cfg,
                     operating_point=_op(cfg), e_per_path=1.0)
     assert len(lp.passes) >= 4                                 # sides, not one ring
-    for p in lp.passes:                                        # no step survives
+    budget = cfg.c_axis.max_scrub_deg_mm
+    for p in lp.passes:                                        # no corner survives
         a = p.axis_angles(cfg.c_axis)
-        assert all(abs(b - c) <= 15.0 + 1e-6 for b, c in zip(a, a[1:]))
+        seg_len = [((q[0] - r[0]) ** 2 + (q[1] - r[1]) ** 2) ** 0.5
+                   for r, q in zip(p.points, p.points[1:])]
+        assert all(abs(b - c) * seg_len[i + 1] <= budget + 1e-6
+                   for i, (c, b) in enumerate(zip(a, a[1:])))
 
 
 def test_emitter_proves_the_heading_step_limit():
@@ -241,9 +257,12 @@ def test_contour_slices_and_emits_on_a_calibrated_sub_360_range():
     lp = plan_layer(Layer(0, 0.06, [disc]), cfg, operating_point=_op(cfg),
                     e_per_path=1.0)
     assert len(lp.passes) >= 8                                # rings trace as arcs
-    assert all(not (abs(p.points[0][0] - p.points[-1][0]) < 1e-9
-                    and abs(p.points[0][1] - p.points[-1][1]) < 1e-9)
-               for p in lp.passes)                            # no full ring survives
+    # outer rings (finely sampled — their headings hit the unreachable gap) must
+    # have split; a coarse INNER ring whose discrete headings dodge the gap may
+    # legally stay closed. The hard contract is the emitter's: every A in range.
+    outer = max(lp.passes, key=lambda p: p.length_mm)
+    assert (abs(outer.points[0][0] - outer.points[-1][0]) > 1e-9
+            or abs(outer.points[0][1] - outer.points[-1][1]) > 1e-9)
     plan = ToolpathPlan([lp], 5000, 120.0, 120.0)
     g = GCodeEmitter(cfg).emit(plan)                          # §6.3 validators pass
     assert "M84" in g
@@ -260,10 +279,11 @@ def test_thin_rib_gets_infill_when_requested_walls_do_not_fit():
     walls, fitted = perimeter_paths(rib, cfg)
     assert fitted == 1 and walls                              # only one wall fits
     assert not inset_interior(rib, cfg, fitted).is_empty      # interior remains
-    # hatch ALONG the rib (heading 0) so the core lines beat min_deposit_len; a
-    # core hatch line is horizontal at the rib's mid-height (walls sit at ±0.5)
+    # auto_heading hatches ALONG the rib by itself (the along-rib direction keeps
+    # the most bead), so the core gets a horizontal line at the rib's mid-height
+    # (the walls sit at ±0.5 from the edges)
     lp = plan_layer(Layer(0, 0.06, [rib]), cfg, operating_point=_op(cfg),
-                    e_per_path=1.0, heading_deg=0.0)
+                    e_per_path=1.0)
     assert any(abs(p.start[1] - p.end[1]) < 1e-6
                and abs(p.start[1] - 101.3) < 0.4 for p in lp.passes)
 

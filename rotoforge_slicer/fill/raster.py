@@ -17,6 +17,46 @@ from typing import List, Tuple
 Segment = Tuple[Tuple[float, float], Tuple[float, float]]
 
 
+def dominant_heading_deg(region) -> float:
+    """The region's dominant direction: the long-axis heading of its minimum
+    rotated rectangle, in degrees CCW from +X, normalized to [0, 180)."""
+    rect = region.minimum_rotated_rectangle
+    coords = list(getattr(rect, "exterior", rect).coords)
+    if len(coords) < 3:                      # degenerate (point/line) region
+        return 90.0
+    best_len, best_deg = -1.0, 90.0
+    for (x0, y0), (x1, y1) in zip(coords, coords[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length > best_len:
+            best_len = length
+            best_deg = math.degrees(math.atan2(y1 - y0, x1 - x0)) % 180.0
+    return best_deg
+
+
+def best_heading_deg(region, cfg, min_len: float) -> float:
+    """The hatch heading that fills this region best, chosen by SCORING candidate
+    directions — the region's long axis, its perpendicular, +Y, and +X — on the
+    actual clipped hatch: most kept bead length first (coverage), fewest pieces
+    second (fragmentation). Under D13 every heading deposits identically, so the
+    choice is free; measuring beats guessing — a blind long-axis pick loses to +Y
+    on multi-directional webs, and +Y loses badly on off-axis ribs. The legacy +Y
+    is always a candidate, so scoring never does worse than the old behavior."""
+    pitch = raster_pitch(cfg)
+    dom = dominant_heading_deg(region)
+    candidates = []
+    for h in (dom, (dom + 90.0) % 180.0, 90.0, 0.0):
+        if not any(abs((h - c + 90.0) % 180.0 - 90.0) < 2.0 for c in candidates):
+            candidates.append(h)
+    best_h, best_score = 90.0, None
+    for h in candidates:
+        segs = raster_lines(region, pitch, heading_deg=h, min_len=min_len)
+        kept = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in segs)
+        score = (round(kept, 3), -len(segs))
+        if best_score is None or score > best_score:
+            best_h, best_score = h, score
+    return best_h
+
+
 def raster_pitch(cfg) -> float:
     """Line spacing = bead_width * (1 - overlap) (SPEC §4.2)."""
     p = cfg.process.bead_width_mm * (1.0 - cfg.process.raster_overlap)

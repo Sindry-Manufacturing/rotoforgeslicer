@@ -76,9 +76,9 @@ def test_emitted_deposition_a_equals_validated_axis_angles():
     # the emitter commands exactly Pass.axis_angles per segment (no divergent re-derivation),
     # so every full-segment deposition A is one of the validated, winding-resolved values.
     cfg = _cfg()
-    # this coarse fixture steps ~22-31 deg/vertex — beyond the default corner rule,
-    # which is not the subject here; A-parity is. Loosen the step limit for the test.
-    cfg.c_axis.max_heading_step_deg = 45.0
+    # this coarse fixture steps ~22-31 deg into ~4-6 mm segments — over the default
+    # scrub budget, which is not the subject here; A-parity is. Disable it.
+    cfg.c_axis.max_scrub_deg_mm = 0.0
     pts = [(190, 100), (190, 106), (192, 111), (195, 114), (199, 115)]
     p = Pass.curved(pts, z=0.06, rpm=5000, traverse_mm_min=120.0,
                     e_per_path_mm=1.0, c_axis=cfg.c_axis)
@@ -94,10 +94,10 @@ def test_emitted_deposition_a_equals_validated_axis_angles():
 def test_tight_curve_emits_when_no_curvature_limit_set():
     # the default config has max_speed_deg_s=0 -> R_min=inf -> NO limit; a curved pass
     # (even a tight one) must emit, not be rejected. Pins the inf-guard (rrf.py).
-    # The per-vertex heading-step rule is a separate, independent guard — disable it
+    # The per-vertex scrub rule is a separate, independent guard — disable it
     # explicitly here (this fixture turns 40 deg at a vertex) to isolate the inf-guard.
     cfg = Config()
-    cfg.c_axis.max_heading_step_deg = 0.0
+    cfg.c_axis.max_scrub_deg_mm = 0.0
     assert cfg.c_axis.max_speed_deg_s == 0.0          # the uncalibrated default
     pts = [(190, 100), (190, 103), (191.93, 105.30)]  # ~4 mm radius (tight)
     p = Pass.curved(pts, z=0.06, rpm=cfg.spindle.rpm_min, traverse_mm_min=120.0,
