@@ -11,3 +11,9 @@ venv/
 .idea/
 .vscode/
 *.gcode
+# per-machine studio state (presets, selections, material profiles) — written
+# into config/ at runtime in a source checkout; the calibration record
+# machine_duet3.yaml stays tracked
+/config/presets/
+/config/studio_state.yaml
+/config/materials.yaml

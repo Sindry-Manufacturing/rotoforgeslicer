@@ -85,7 +85,23 @@ range cannot reach.
 Forking ~1M lines of C++ whose FFF physics violates our invariants was evaluated
 and rejected; instead we port its subsystems from the user's source zip
 (`C:\Users\Unit-006\Downloads\PrusaSlicer-master.zip`, GPL/AGPL approved).
-**Port #1 (auto-arrange) is done.**
+**Port #1 (auto-arrange) and Port #2 (presets + projects) are done.**
+
+### Presets + projects (Port #2, `presets.py` + `studio/project.py`)
+- **Machine / Material / Process presets** (PresetBundle architecture): explicit
+  per-type key ownership (partition test), edited-overlay selection model with
+  "(modified)" dirty labels, sparse YAML preset files under
+  `config/presets/<type>/` (base `machine_duet3.yaml` stays authoritative for
+  untouched keys), selections persisted in `config/studio_state.yaml`
+  (`ROTOFORGE_DATA_DIR` overrides; `~/.rotoforge` when frozen)
+- **`.rfproj` project files** (3MF-container architecture): zip of embedded
+  binary-STL meshes + six-float transforms + full flat config snapshot + preset
+  identity + embedded screener CSV (embedded copy wins on load); atomic save;
+  version-gated; unknown/bad config content substitutes-and-reports, never aborts
+- Studio: preset selector rows + Open/Save project; `_sync_bundle` invariant
+  keeps widgets/cfg/overlays coherent; changed-only `_apply_params` so lossy
+  widgets can't corrupt off-grid config values; project load reconciles presets
+  clean/modified/external and invalidates stale preview/playback state
 
 ## 3. Current state
 
@@ -109,17 +125,17 @@ and rejected; instead we port its subsystems from the user's source zip
 
 ## 4. Next steps
 
-1. **Port #2 — presets + project save/load** (agreed): Machine/Material/Process
-   profile layering with inheritance (PrusaSlicer PresetBundle structure) and
-   saving the whole plate + settings as one reopenable project file
-2. **Port #3 — seam placement**: nearest/aligned/random ring starts inside the
+1. **Port #3 — seam placement**: nearest/aligned/random ring starts inside the
    winding seat window (fixes seam clustering)
-3. **Hardware calibration** (SPEC §13): measure the real `a_min/a_max` range
+2. **Hardware calibration** (SPEC §13): measure the real `a_min/a_max` range
    (decides closed-loop-in-one-pass), verify RRF combined-feed behavior, calibrate
    `max_scrub_deg_mm` against observed bead quality, bead width under squeeze-out
-4. **Coverage improvements**: gap-fill / thin-feature strategy for regions the
+3. **Coverage improvements**: gap-fill / thin-feature strategy for regions the
    6 mm minimum currently abandons
-5. **M11 remainder**: transform gizmos, reorientation-break/unwind heatmap
+4. **M11 remainder**: transform gizmos, reorientation-break/unwind heatmap
+5. Presets follow-ups (small): promote materials.yaml profiles to material
+   presets in the screener dialog (`material_preset_from_profile` exists),
+   remember last-used dirs in file dialogs
 6. After any code change: rebuild the exe (`python -m PyInstaller
    packaging/rotoforge_slicer.spec --noconfirm`) — a onefile exe never picks up
    new code by itself

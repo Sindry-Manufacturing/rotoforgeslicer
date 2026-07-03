@@ -205,8 +205,16 @@ def open_screener_dialog(win) -> None:
         win.cfg.screener.traverse_target = _trav(cell) if cell else 0.0
         win.cfg.process.bed_temp_c = bed_spin.value()
         win.cfg.process.hotshoe_macro = hotshoe_macro_name(hot_spin.value())
+        # the CSV path rides the config too (material presets / project files
+        # round-trip it); the pipeline still receives win.csv_path explicitly.
+        # A temp-extracted embedded CSV keeps its ORIGINAL source in the
+        # config (sticky provenance), and an empty dialog never erases it.
         if state["csv"]:
+            prov = getattr(win, "_csv_provenance", None)
+            win.cfg.screener.csv_path = (
+                prov if prov and state["csv"] == win.csv_path else state["csv"])
             win.csv_path = state["csv"]
+            win._csv_provenance = win.cfg.screener.csv_path
             win.csv_lbl.setText(Path(state["csv"]).name)
         win._log(
             f"process window applied: "

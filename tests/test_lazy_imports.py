@@ -57,6 +57,8 @@ _CHILD = textwrap.dedent(
     import rotoforge_slicer.studio.arrange
     import rotoforge_slicer.studio.screener_plot
     import rotoforge_slicer.studio.screener_panel
+    import rotoforge_slicer.presets
+    import rotoforge_slicer.studio.project
 
     # Pure-python helpers must work with all heavy deps blocked.
     assert rotoforge_slicer.geometry.layer_heights(0.0, 1.0, 0.5) == [0.25, 0.75]

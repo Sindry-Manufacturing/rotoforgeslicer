@@ -46,6 +46,20 @@ ADVANCED_FIELDS = (
 )
 
 
+# Basic process-form fields (widget attr, cfg path). One table drives both the
+# cfg -> widgets restore (_load_params_from_cfg) and the CHANGED-ONLY widgets ->
+# cfg write-back (_apply_params): a value the user never touched must not be
+# replaced by its range-clamped / decimals-quantized widget rendering.
+BASIC_FIELDS = (
+    ("f_lh", "process.layer_height_mm"),
+    ("f_bw", "process.bead_width_mm"),
+    ("f_ov", "process.raster_overlap"),
+    ("f_ml", "process.min_deposit_len_mm"),
+    ("f_amin", "c_axis.a_min_deg"),
+    ("f_amax", "c_axis.a_max_deg"),
+)
+
+
 def _cfg_get(cfg, path: str):
     obj = cfg
     for part in path.split("."):
@@ -67,8 +81,8 @@ def _build_studio_window():
     from PySide6 import QtCore, QtWidgets
     from pyvistaqt import QtInteractor
 
-    from ..gui.app import _default_config
     from ..gui.model import preview_from_model
+    from ..presets import PresetBundle
     from .scene import SceneModel
     from .viewport import BuildPlateScene
 
@@ -110,7 +124,12 @@ def _build_studio_window():
             super().__init__()
             self.setWindowTitle("Rotoforge Studio")
             self.resize(1400, 860)
-            self.cfg = _default_config()
+            # PresetBundle port (rotoforge_slicer.presets): the machine /
+            # material / process layering composes the working config; the
+            # composed cfg stays THE live object every existing path reads.
+            self.bundle = PresetBundle()
+            self.cfg = self.bundle.full_config()
+            self._param_baseline = {}     # cfg truth per widget-backed key
             self.scene = SceneModel()
             self.selected = None
             self.preview = None
@@ -120,6 +139,7 @@ def _build_studio_window():
             self.sim_t = 0.0
             self.playing = False
             self.csv_path = None
+            self._csv_provenance = None   # original source of a temp-extracted CSV
             self._thread = None
             self._worker = None
             self._build_ui()
@@ -144,9 +164,43 @@ def _build_studio_window():
             split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
             root.addWidget(split)
 
-            # ---- left: parts + transform + process ----
+            # ---- left: project + presets + parts + transform + process ----
             left = QtWidgets.QWidget()
             lyt = QtWidgets.QVBoxLayout(left)
+
+            prj_row = QtWidgets.QHBoxLayout()
+            self.btn_open_project = QtWidgets.QPushButton("Open project…")
+            self.btn_open_project.clicked.connect(self._open_project)
+            self.btn_save_project = QtWidgets.QPushButton("Save project…")
+            self.btn_save_project.clicked.connect(self._save_project)
+            prj_row.addWidget(self.btn_open_project)
+            prj_row.addWidget(self.btn_save_project)
+            lyt.addLayout(prj_row)
+
+            # PrusaSlicer-style preset selectors. Canonical names ride in
+            # itemData (item TEXT may carry a "(modified)" suffix); only the
+            # user-gesture `activated` signal is connected, so programmatic
+            # refreshes can never loop through the handler.
+            prsbox = QtWidgets.QGroupBox("Presets")
+            prsform = QtWidgets.QFormLayout(prsbox)
+            self.preset_combos = {}
+            for ptype, plabel in (("machine", "Machine"),
+                                  ("material", "Material"),
+                                  ("process", "Process")):
+                prow_ = QtWidgets.QHBoxLayout()
+                combo = QtWidgets.QComboBox()
+                combo.activated.connect(
+                    lambda idx, t=ptype: self._on_preset_activated(t, idx))
+                b_save = QtWidgets.QPushButton("Save…")
+                b_save.clicked.connect(lambda _=False, t=ptype: self._save_preset(t))
+                b_del = QtWidgets.QPushButton("Del")
+                b_del.clicked.connect(lambda _=False, t=ptype: self._delete_preset(t))
+                prow_.addWidget(combo, stretch=1)
+                prow_.addWidget(b_save)
+                prow_.addWidget(b_del)
+                self.preset_combos[ptype] = combo
+                prsform.addRow(plabel, prow_)
+            lyt.addWidget(prsbox)
 
             pbox = QtWidgets.QGroupBox("Parts")
             pl = QtWidgets.QVBoxLayout(pbox)
@@ -339,7 +393,9 @@ def _build_studio_window():
             right.addWidget(view_w)
 
             self.tabs = QtWidgets.QTabWidget()
-            self.tabs.currentChanged.connect(self._on_mode_changed)
+            # connected AFTER both tabs exist (below): addTab fires
+            # currentChanged, and _on_mode_changed touches widgets (btn_play)
+            # built later in this method
 
             prep = QtWidgets.QWidget()
             pl2 = QtWidgets.QVBoxLayout(prep)
@@ -400,6 +456,7 @@ def _build_studio_window():
             self.readout.setWordWrap(True)
             vl.addWidget(self.readout)
             self.tabs.addTab(prev, "Preview")
+            self.tabs.currentChanged.connect(self._on_mode_changed)
             right.addWidget(self.tabs)
 
             bottom = QtWidgets.QWidget()
@@ -422,6 +479,15 @@ def _build_studio_window():
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(_TICK_MS)
             self.timer.timeout.connect(self._on_tick)
+
+            # widgets were built from cfg above; record the true cfg values as
+            # the write-back baselines and populate the preset selectors
+            self._load_params_from_cfg()
+            self._restore_csv_from_cfg()  # a remembered material's CSV survives
+            self._refresh_preset_combos()  # restarts (single-speed otherwise)
+            for w in self.bundle.warnings():
+                self._log(f"presets: {w}")
+            self._warn_safety_flags()
 
         def _dspin(self, val, lo, hi, step, dec):
             s = QtWidgets.QDoubleSpinBox()
@@ -465,6 +531,7 @@ def _build_studio_window():
                 self._log(f"ERROR loading {fn}: {e}")
                 return
             part = self.scene.add(mesh, name=Path(fn).stem, cfg=self.cfg)
+            part.source_path = str(fn)          # provenance for project files
             self.selected = part
             self._refresh_part_list()
             self._load_transform_form()
@@ -685,29 +752,220 @@ def _build_studio_window():
                 self, "Open process-window CSV", "", "CSV (*.csv);;All files (*)")
             if fn:
                 self.csv_path = fn
+                self._csv_provenance = fn
+                # the config key rides along so material presets / project
+                # files round-trip the CSV (the pipeline still gets the
+                # explicit csv argument)
+                self.cfg.screener.csv_path = fn
                 self.csv_lbl.setText(Path(fn).name)
+                self.bundle.capture(self.cfg)     # direct cfg write
+                self._refresh_preset_combos()
 
         def _apply_params(self):
-            p = self.cfg.process
-            p.layer_height_mm = self.f_lh.value()
-            p.bead_width_mm = self.f_bw.value()
-            p.raster_overlap = self.f_ov.value()
-            p.min_deposit_len_mm = self.f_ml.value()
-            self.cfg.c_axis.a_min_deg = self.f_amin.value()
-            self.cfg.c_axis.a_max_deg = self.f_amax.value()
-            self.cfg.fill.mode = self.f_mode.currentText()
-            self.cfg.fill.perimeter_loops = self.f_loops.value()
-            self.cfg.fill.crosshatch = self.f_cross.isChecked()
+            """Widgets -> cfg, CHANGED-ONLY (the _on_transform_edit rationale):
+            spinboxes clamp and quantize, so an untouched widget must never
+            overwrite a config value it cannot represent (e.g. a hand-edited
+            preset's out-of-range feed)."""
+            def maybe(w, path):
+                val = w.value()
+                base = self._param_baseline.get(path)
+                if base is not None and abs(val - base) <= 0.5 * 10 ** -w.decimals():
+                    return
+                cur = _cfg_get(self.cfg, path)
+                _cfg_set(self.cfg, path, int(val) if w.decimals() == 0
+                         and isinstance(cur, int) else val)
+                self._param_baseline[path] = val
+
+            for attr, path in BASIC_FIELDS:
+                maybe(getattr(self, attr), path)
             for path, w in self.adv_widgets.items():
-                value = w.value()
-                _cfg_set(self.cfg, path, int(value) if w.decimals() == 0
-                         and isinstance(_cfg_get(self.cfg, path), int) else value)
+                maybe(w, path)
+            if self.f_loops.value() != self._param_baseline.get("fill.perimeter_loops"):
+                self.cfg.fill.perimeter_loops = self.f_loops.value()
+                self._param_baseline["fill.perimeter_loops"] = self.f_loops.value()
+            # the mode combo is changed-only too: a config mode outside the
+            # combo's vocabulary (newer version) must not be silently replaced
+            # by whatever the combo happens to display
+            if self.f_mode.currentText() != self._param_baseline.get("fill.mode"):
+                self.cfg.fill.mode = self.f_mode.currentText()
+                self._param_baseline["fill.mode"] = self.f_mode.currentText()
+            # boolean widgets are lossless — write through
+            self.cfg.fill.crosshatch = self.f_cross.isChecked()
             self.cfg.emit.dry_run = self.adv_dry.isChecked()
+
+        def _load_params_from_cfg(self):
+            """Widgets <- cfg (the inverse of _apply_params), recording each
+            TRUE cfg value as the write-back baseline. A widget that clamps or
+            quantizes the incoming value is reported — the display is then an
+            approximation, but the config value survives (changed-only rule)."""
+            clamped = []
+
+            def setv(w, path):
+                val = float(_cfg_get(self.cfg, path))
+                w.blockSignals(True)
+                w.setValue(val)
+                w.blockSignals(False)
+                # baseline = the WIDGET's rendering of the loaded value: an
+                # untouched widget then always compares equal to its baseline,
+                # even when it had to clamp/quantize the true config value
+                self._param_baseline[path] = w.value()
+                if abs(w.value() - val) > 1e-9:
+                    clamped.append(f"{path}={val:g} (shown {w.value():g})")
+
+            for attr, path in BASIC_FIELDS:
+                setv(getattr(self, attr), path)
+            for path, w in self.adv_widgets.items():
+                setv(w, path)
+            self.f_loops.blockSignals(True)
+            self.f_loops.setValue(self.cfg.fill.perimeter_loops)
+            self.f_loops.blockSignals(False)
+            self._param_baseline["fill.perimeter_loops"] = self.f_loops.value()
+            self.f_mode.blockSignals(True)
+            self.f_mode.setCurrentText(self.cfg.fill.mode)
+            self.f_mode.blockSignals(False)
+            self._param_baseline["fill.mode"] = self.f_mode.currentText()
+            if self.f_mode.currentText() != self.cfg.fill.mode:
+                clamped.append(f"fill.mode={self.cfg.fill.mode!r} not in the "
+                               "mode selector")
+            self.f_cross.setChecked(self.cfg.fill.crosshatch)
+            self.adv_dry.setChecked(self.cfg.emit.dry_run)
+            if clamped:
+                self._log("WARNING: widget limits clamp config values (the "
+                          "config keeps the true values): " + "; ".join(clamped))
+
+        # ---- presets (PresetBundle port; see rotoforge_slicer.presets) --------
+
+        def _sync_bundle(self):
+            """THE bundle-read invariant: widgets -> cfg, then cfg -> the edited
+            overlays. Must precede every bundle read (combo activate, preset
+            Save/Delete, Slice, project save) — the studio's widgets write to a
+            live Config, not through the presets like PrusaSlicer's tabs do."""
+            self._apply_params()
+            self.bundle.capture(self.cfg)
+
+        def _refresh_preset_combos(self):
+            for ptype, combo in self.preset_combos.items():
+                col = self.bundle.collections[ptype]
+                combo.blockSignals(True)
+                combo.clear()
+                for name in col.names():
+                    combo.addItem(name, name)
+                idx = combo.findData(col.selected)
+                if idx >= 0:
+                    if col.is_dirty():
+                        combo.setItemText(idx, f"{col.selected} (modified)")
+                    combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+
+        def _on_preset_activated(self, ptype, index):
+            name = self.preset_combos[ptype].itemData(index)
+            if name is None:
+                return
+            self._sync_bundle()               # other types keep their dirty state
+            actual = self.bundle.collections[ptype].select(name)
+            self.cfg = self.bundle.full_config()
+            self.bundle.save_selections()
+            self._load_params_from_cfg()
+            self._restore_csv_from_cfg()
+            if ptype == "machine":
+                self._refresh_machine_ui()
+            self._refresh_preset_combos()
+            self._log(f"{ptype} preset: {actual}")
+            self._warn_safety_flags()
+
+        def _save_preset(self, ptype):
+            self._sync_bundle()
+            col = self.bundle.collections[ptype]
+            suggestion = ("" if col.presets[col.selected].is_default
+                          else col.selected)
+            name, ok = QtWidgets.QInputDialog.getText(
+                self, f"Save {ptype} preset", "Preset name:", text=suggestion)
+            if not ok or not name.strip():
+                return
+            try:
+                col.save_current(name)
+            except (ValueError, OSError) as e:
+                self._log(f"ERROR saving {ptype} preset: {e}")
+                return
+            self.bundle.save_selections()
+            self._refresh_preset_combos()
+            self._log(f"saved {ptype} preset {col.selected!r} -> "
+                      f"{col.dir_path / (col.selected + '.yaml')}")
+
+        def _delete_preset(self, ptype):
+            col = self.bundle.collections[ptype]
+            name = col.selected
+            if col.presets[name].is_default:
+                self._log("the default preset cannot be deleted")
+                return
+            resp = QtWidgets.QMessageBox.question(
+                self, "Delete preset", f"Delete {ptype} preset {name!r}?")
+            if resp != QtWidgets.QMessageBox.Yes:
+                return
+            col.delete(name)                  # selection falls back to default
+            self.cfg = self.bundle.full_config()
+            self.bundle.save_selections()
+            self._load_params_from_cfg()
+            self._restore_csv_from_cfg()
+            if ptype == "machine":
+                self._refresh_machine_ui()
+            self._refresh_preset_combos()
+            self._log(f"deleted {ptype} preset {name!r}")
+            self._warn_safety_flags()
+
+        def _restore_csv_from_cfg(self):
+            """win.csv_path <- cfg.screener.csv_path after a preset changed the
+            config underneath the UI. A temp-extracted embedded CSV stays bound
+            as long as the config still names its recorded source — otherwise a
+            preset switch after a project load would drop the working copy for
+            a path that only exists on the machine the project came from."""
+            csvp = self.cfg.screener.csv_path
+            if (csvp and csvp == self._csv_provenance
+                    and self.csv_path and Path(self.csv_path).exists()):
+                return                                    # embedded copy stays
+            if csvp and Path(csvp).exists():
+                self.csv_path = csvp
+                self._csv_provenance = csvp
+                self.csv_lbl.setText(Path(csvp).name)
+            elif csvp:
+                self.csv_path = None
+                self.csv_lbl.setText(f"CSV MISSING: {csvp}")
+                self._log(f"WARNING: screener CSV not found: {csvp}")
+            else:
+                self.csv_path = None
+                self.csv_lbl.setText("no CSV (single-speed fallback)")
+
+        def _refresh_machine_ui(self):
+            """Build-volume-derived UI (plate actor, transform ranges) after a
+            machine preset / opened project changed cfg.machine."""
+            bx, by, _ = self.cfg.machine.build_volume_mm
+            for w, hi in ((self.t_x, bx), (self.t_y, by)):
+                w.blockSignals(True)          # setRange clamps -> valueChanged
+                # never clamp below an existing part position: the clamped
+                # widget would read as "user-changed" on the next unrelated
+                # edit and teleport the part (issues() flags oversize plates)
+                w.setRange(0, max(hi, w.value()))
+                w.blockSignals(False)
+            self._load_transform_form()       # re-sync widgets to the part
+            self.view.draw_plate(self.cfg)
+            self._sync_scene()
+
+        def _warn_safety_flags(self):
+            """Presets/projects can restore flags with no prominent UI; say so
+            loudly — a silently disabled collision check reads as 'no
+            collisions' in the slice summary (SPEC §4.6)."""
+            if not self.cfg.collision.enabled:
+                self._log("WARNING: collision checking is DISABLED "
+                          "(collision.enabled = false in this config)")
+            if self.cfg.emit.dry_run:
+                self._log("NOTE: dry run is ON (no spindle / heaters / E)")
 
         def _open_screener(self):
             from .screener_panel import open_screener_dialog
 
-            open_screener_dialog(self)
+            open_screener_dialog(self)        # modal; Apply writes cfg directly
+            self.bundle.capture(self.cfg)
+            self._refresh_preset_combos()     # material may now be (modified)
 
         def _slice(self):
             if not self.scene.parts:
@@ -716,7 +974,8 @@ def _build_studio_window():
             issues = self.scene.issues(self.cfg)
             if issues:
                 self._log("Placement issues:\n  " + "\n  ".join(issues))
-            self._apply_params()
+            self._sync_bundle()
+            self._refresh_preset_combos()     # edits may show as (modified)
             self._set_playing(False)
             self.btn_slice.setEnabled(False)
             self.btn_save.setEnabled(False)
@@ -913,6 +1172,169 @@ def _build_studio_window():
                 Path(fn).write_text(self.preview.gcode, encoding="utf-8")
                 self._log(f"Saved {fn}")
 
+        # ---- project save/load (3MF-architecture port; studio/project.py) -----
+
+        def _save_project(self):
+            self._sync_bundle()               # widgets + cfg -> overlays first
+            fn, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Save project", "studio.rfproj",
+                "Rotoforge project (*.rfproj)")
+            if not fn:
+                return
+            from .project import save_project
+
+            try:
+                save_project(fn, self.scene, self.cfg, csv_path=self.csv_path,
+                             selections=self.bundle.selections(),
+                             ui={"arrange_spacing_mm": self.arr_spacing.value()})
+            except Exception as e:
+                self._log(f"ERROR saving project: {e}")
+                return
+            self._refresh_preset_combos()
+            self._log(f"Saved project {fn}")
+
+        def _open_project(self):
+            fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Open project", "",
+                "Rotoforge project (*.rfproj);;All files (*)")
+            if fn:
+                self.open_project_file(fn)
+
+        def open_project_file(self, fn):
+            """Restore a saved project: geometry -> config -> preset
+            reconciliation -> UI (the 3mf load order). Public — main() feeds
+            CLI project paths here."""
+            if self._thread:
+                self._log("Cannot open a project while a slice is running.")
+                return
+            from ..presets import apply_flat, base_config
+            from .project import load_project
+
+            try:
+                data = load_project(fn)
+            except Exception as e:
+                self._log(f"ERROR opening project {fn}: {e}")
+                return
+
+            # drop every artifact of the previous session: a stale preview /
+            # running playback would pair the old toolpath with the new plate
+            self._set_playing(False)
+            self.preview = None
+            self.timeline = []
+            self.btn_save.setEnabled(False)
+            self.btn_play.setEnabled(False)
+            self.time_slider.setEnabled(False)
+            self.layer_range.setVisible(False)
+            self.move_row.setVisible(False)
+            self._drag = None
+            self.tabs.setCurrentIndex(0)
+
+            for w in data.warnings:
+                self._log(f"project: {w}")
+
+            if data.config_flat:
+                # config: defaults <- snapshot (missing keys keep the current
+                # defaults; unknown/bad content substitutes and reports — a
+                # project from another version must open, never abort)
+                cfg = base_config()
+                for line in apply_flat(cfg, data.config_flat, on_unknown="warn"):
+                    self._log(f"project config: {line}")
+                self.cfg = cfg
+            else:
+                self._log("model-only project: keeping the current settings "
+                          "and presets")
+
+            # scene swap — the old selection would be a ghost part
+            self.scene = data.scene
+            self.selected = self.scene.parts[-1] if self.scene.parts else None
+
+            if data.config_flat:
+                self._restore_project_csv(data, Path(fn).stem)
+                n_before = {t: len(self.bundle.collections[t].warnings)
+                            for t in ("machine", "material", "process")}
+                outcomes = self.bundle.adopt_project(data.config_flat,
+                                                     data.selections)
+                self.bundle.save_selections()
+                for t in ("machine", "material", "process"):
+                    col = self.bundle.collections[t]
+                    self._log(f"  {t} preset: {col.selected!r} ({outcomes[t]})")
+                    for w in col.warnings[n_before[t]:]:
+                        self._log(f"  {w}")
+                self._warn_machine_drift(data.config_flat)
+
+            if "arrange_spacing_mm" in data.ui:
+                try:
+                    self.arr_spacing.setValue(float(data.ui["arrange_spacing_mm"]))
+                except (TypeError, ValueError):
+                    pass
+
+            self._load_params_from_cfg()
+            self._refresh_machine_ui()
+            self._refresh_preset_combos()
+            self._refresh_part_list()
+            self._load_transform_form()
+            self._sync_scene()
+            self.view.reset_camera()
+            self._warn_safety_flags()
+            self._log(f"Opened project {fn}: {len(self.scene.parts)} part(s)")
+
+        def _warn_machine_drift(self, snapshot):
+            """A project restores the FULL config — including this machine's
+            calibration record (ω_C, steps, axis range). Adopting a stale
+            calibration silently retargets the invariant proofs, so differences
+            from the local base are called out (the Machine preset also shows
+            (modified))."""
+            from ..presets import (
+                MACHINE_KEYS, RECONCILE_IGNORE_KEYS, flatten_config, values_equal,
+            )
+
+            base_flat = flatten_config(self.bundle.base)
+            drift = [k for k in MACHINE_KEYS
+                     if k in snapshot and k not in RECONCILE_IGNORE_KEYS
+                     and not values_equal(snapshot[k], base_flat[k])]
+            if drift:
+                self._log("WARNING: this project's machine values differ from "
+                          "the local calibration record (machine_duet3.yaml): "
+                          + ", ".join(sorted(drift))
+                          + " — verify before running on hardware; select the "
+                          "machine default preset to use the local values")
+
+        def _restore_project_csv(self, data, stem):
+            """The EMBEDDED screener CSV is the ground truth the project was
+            validated with — it always wins; the recorded source path stays in
+            cfg as sticky provenance. A drifted source file is reported."""
+            self.csv_path = None
+            self._csv_provenance = None
+            label = "no CSV (single-speed fallback)"
+            src = data.csv_source_path or self.cfg.screener.csv_path
+            if data.csv_bytes is not None:
+                import hashlib
+                import tempfile
+
+                d = Path(tempfile.gettempdir()) / "rotoforge_projects"
+                d.mkdir(parents=True, exist_ok=True)
+                # content-addressed: same-stem projects / concurrent studio
+                # instances must never overwrite each other's process window
+                digest = hashlib.sha1(data.csv_bytes).hexdigest()[:12]
+                tmp = d / f"{stem}_{digest}_screener.csv"
+                tmp.write_bytes(data.csv_bytes)
+                self.csv_path = str(tmp)
+                self._csv_provenance = src or None
+                label = f"{Path(src).name if src else tmp.name} (embedded)"
+                if src and Path(src).exists() \
+                        and Path(src).read_bytes() != data.csv_bytes:
+                    self._log(f"WARNING: {src} has changed since this project "
+                              "was saved; using the embedded copy")
+            elif src and Path(src).exists():
+                self.csv_path = src
+                self._csv_provenance = src
+                label = Path(src).name
+            elif src:
+                label = f"CSV MISSING: {src}"
+                self._log("WARNING: screener CSV neither embedded nor found "
+                          f"on disk: {src}")
+            self.csv_lbl.setText(label)
+
     return StudioWindow()
 
 
@@ -928,7 +1350,11 @@ def main(argv=None) -> int:
     win = _build_studio_window()
     win.show()
     for a in args:
-        if a.lower().endswith((".stl", ".3mf", ".obj", ".ply")) and Path(a).exists():
+        if not Path(a).exists():
+            continue
+        if a.lower().endswith(".rfproj"):
+            win.open_project_file(a)
+        elif a.lower().endswith((".stl", ".3mf", ".obj", ".ply")):
             win.add_mesh_file(a)
     return app.exec()
 

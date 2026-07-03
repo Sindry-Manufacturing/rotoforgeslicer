@@ -96,6 +96,7 @@ class ScenePart:
     rot_y_deg: float = 0.0
     rot_z_deg: float = 0.0
     scale: float = 1.0
+    source_path: str = ""          # provenance only (project files embed the mesh)
     _dz: float = field(default=0.0, repr=False)   # drop-to-bed offset (computed)
 
     def __post_init__(self):

@@ -15,6 +15,47 @@ for the milestone plan and `docs/DECISIONS.md` for decisions.
 
 ## Recent changes
 
+- **Presets + project save/load landed (PrusaSlicer port #2).** `presets.py` ports
+  the Preset/PresetBundle architecture (Preset.cpp/PresetBundle.cpp): three preset
+  types — **machine / material / process** — each owning an explicit static list of
+  dotted config keys (partition test: every `Config` key claimed exactly once;
+  `process.wheel_diameter_mm` is machine hardware), collections with the
+  edited-overlay model (select discards edits, dirty = diff vs saved,
+  `save_current` carries `inherits` as pure annotation), **sparse user preset
+  files** (only diffs vs base — `machine_duet3.yaml` stays authoritative for
+  untouched keys after recalibration), compose = ordered dict-apply over a deep
+  copy of the base, `screener.csv_path` on the `profile_print_params_same`-style
+  ignore list. `studio/project.py` ports the 3MF container (3mf.cpp) as a
+  `.rfproj` zip: embedded binary-STL meshes (deduped for duplicated parts;
+  untransformed — transforms live in the manifest), full flat config snapshot +
+  selected preset names, embedded screener CSV (embedded copy WINS on load;
+  source path kept as sticky provenance), atomic tmp+`os.replace` save,
+  format-version write/accept-up-to constants, substitute-and-report (never
+  abort) on unknown keys / bad values — coercion types come from the dataclass
+  DEFAULTS (the yaml parses `110` as int where the field is float). Studio:
+  three preset selector rows (canonical name in itemData, "(modified)" via
+  setItemText, `activated`-only signal), Open/Save project buttons, project-load
+  reconciliation (clean / modified / external "(project)" presets, port of
+  `load_external_preset`), and the **`_sync_bundle` invariant** (widgets→cfg→
+  overlays before every bundle read, capture after every direct cfg writer) so a
+  preset switch can never drop screener-dialog state or another type's edits.
+  `_apply_params` became **changed-only** with widget-rendered baselines: an
+  out-of-range/off-grid config value (e.g. hand-tuned `lead_in 0.3` under the
+  0.5 spinbox floor) survives open→save untouched. Pre-commit review: 3 design
+  critics reshaped the design (sync invariant, sparse files, ignore list,
+  changed-only write-back), then a 4-finder + 2-skeptic-per-finding campaign
+  confirmed 12 defect classes — all fixed: preset/project values are
+  **sanitized at load** (one bad hand-edited value can no longer brick the
+  console-less frozen studio at launch), `TypeError` values substitute instead
+  of aborting a project open, malformed `studio_state.yaml` degrades to
+  defaults (and is written atomically), the embedded-CSV binding survives
+  restarts and preset switches (content-hashed temp extraction, sticky
+  provenance in the screener dialog), model-only projects keep current
+  settings, machine-calibration drift in a project logs a hardware warning,
+  `collision.enabled=false`/`dry_run` restored from presets/projects warn
+  loudly, external "(project)" names are idempotent, case-only preset name
+  collisions are rejected, non-leaf keys can't replace config sections, and a
+  smaller-plate machine switch can't teleport parts. 255 tests green.
 - **Direction decision: PrusaSlicer by PORTING, not forking.** Evaluated forking
   PrusaSlicer-master (~1M lines C++; MSVC present, deps superbuild required) to
   "add a Rotoforge mode": rejected — every pipeline stage encodes FFF physics that

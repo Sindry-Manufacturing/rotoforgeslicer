@@ -103,7 +103,28 @@ def test_show_collisions_marks_points():
     assert len(view._path_actors) == 1
 
 
-def test_studio_window_constructs_offscreen():
+def _run_gl_subprocess(code, tmp_path, *args):
+    """Run studio GUI code in a subprocess with an isolated preset data dir.
+    NOT under QT_QPA_PLATFORM=offscreen: VTK's QtInteractor needs a real GL
+    context and hard-crashes (no valid pixel format) on the offscreen platform.
+    Windows are constructed but never shown; on truly headless machines (CI)
+    the GL/display init fails inside VTK — skip there, don't fail."""
+    env = dict(os.environ, ROTOFORGE_DATA_DIR=str(tmp_path / "data"),
+               PYTHONPATH=str(ROOT))    # script files don't put the cwd on sys.path
+    script = tmp_path / "studio_check.py"
+    script.write_text(code, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(script), *map(str, args)],
+                       cwd=str(ROOT), env=env,
+                       capture_output=True, text=True, timeout=300)
+    if r.returncode != 0 and any(
+            key in (r.stderr or "") for key in
+            ("pixel format", "OpenGL", "xcb", "DISPLAY", "display")):
+        pytest.skip(f"no GL/display for QtInteractor here: {r.stderr[-200:]!r}")
+    assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
+    return r.stdout
+
+
+def test_studio_window_constructs_offscreen(tmp_path):
     pytest.importorskip("pyvistaqt")
     pytest.importorskip("PySide6")
     code = (
@@ -122,18 +143,121 @@ def test_studio_window_constructs_offscreen():
         "assert w.layer_range.clamp(7, 2, 0, 5) == (2, 5)\n"   # order + clamp
         "assert w.move_slider is not None and w.shells_cb is not None\n"
         "assert w.btn_arrange is not None and w.arr_spacing.value() == 30.0\n"
+        "assert set(w.preset_combos) == {'machine', 'material', 'process'}\n"
+        "for c in w.preset_combos.values():\n"
+        "    assert c.currentText() == '- default -'\n"
+        "assert w.btn_open_project is not None and w.btn_save_project is not None\n"
         "w.close()\n"
         "print('STUDIO_OK')\n"
     )
-    # NOT run under QT_QPA_PLATFORM=offscreen: VTK's QtInteractor needs a real GL
-    # context and hard-crashes (no valid pixel format) on the offscreen platform.
-    # The window is constructed but never shown. On truly headless machines (CI)
-    # the GL/display init fails inside VTK — skip there, don't fail.
-    r = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT),
-                       capture_output=True, text=True, timeout=180)
-    if r.returncode != 0 and any(
-            key in (r.stderr or "") for key in
-            ("pixel format", "OpenGL", "xcb", "DISPLAY", "display")):
-        pytest.skip(f"no GL/display for QtInteractor here: {r.stderr[-200:]!r}")
-    assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
-    assert "STUDIO_OK" in r.stdout
+    out = _run_gl_subprocess(code, tmp_path)
+    assert "STUDIO_OK" in out
+
+
+def test_studio_presets_and_project_round_trip(tmp_path):
+    """End-to-end through the real window: off-grid config values survive the
+    lossy widget round trip (changed-only rule); a material edit survives a
+    process preset switch (the _sync_bundle invariant); save project → open in
+    a fresh window restores scene transforms, widget state, presets (clean
+    reconciliation), the embedded CSV, and invalidates stale preview state."""
+    pytest.importorskip("pyvistaqt")
+    pytest.importorskip("PySide6")
+    code = """
+import sys
+from pathlib import Path
+
+import trimesh
+from PySide6 import QtWidgets
+
+from rotoforge_slicer.studio.app import _build_studio_window
+from rotoforge_slicer.studio.project import save_project
+
+tmp = Path(sys.argv[1])
+app = QtWidgets.QApplication([])
+w = _build_studio_window()
+
+# --- off-grid cfg value survives widgets (changed-only write-back) ---
+w.cfg.process.lead_in_len_mm = 0.3          # widget floor is 0.5
+w._load_params_from_cfg()
+assert w.adv_widgets["process.lead_in_len_mm"].value() == 0.5   # clamped DISPLAY
+w._apply_params()
+assert w.cfg.process.lead_in_len_mm == 0.3, "untouched widget must not clobber cfg"
+
+# --- plate + edits ---
+stl = tmp / "box.stl"
+trimesh.creation.box(extents=(10.0, 20.0, 5.0)).export(stl)
+w.add_mesh_file(str(stl))
+assert w.scene.parts[0].source_path == str(stl)
+w.scene.parts[0].set_transform(x=123.4, y=56.7, rot_z_deg=30.0, scale=1.25)
+w.f_lh.setValue(0.2)
+w.f_mode.setCurrentText("streamline")
+
+csv = tmp / "window.csv"
+csv.write_text("header\\n1,2\\n", encoding="utf-8")
+w.csv_path = str(csv)                       # what _open_csv does, sans dialog
+w.cfg.screener.csv_path = str(csv)
+w.bundle.capture(w.cfg)
+
+# --- material edit must survive a PROCESS preset activation (sync invariant) ---
+w.cfg.process.bed_temp_c = 151.5            # what screener-dialog Apply does
+w.bundle.capture(w.cfg)
+w._sync_bundle()
+w.bundle.collections["process"].save_current("proj proc")
+w.bundle.save_selections()
+w._refresh_preset_combos()
+idx = w.preset_combos["process"].findData("proj proc")
+assert idx >= 0
+w._on_preset_activated("process", idx)      # re-select: discards process edits only
+assert w.cfg.process.bed_temp_c == 151.5, "material dirty state lost on process switch"
+assert w.cfg.process.layer_height_mm == 0.2
+assert w.bundle.collections["material"].is_dirty()
+
+proj = tmp / "job.rfproj"
+save_project(proj, w.scene, w.cfg, csv_path=w.csv_path,
+             selections=w.bundle.selections(),
+             ui={"arrange_spacing_mm": 55.0})
+
+# --- fresh window, open the project ---
+w2 = _build_studio_window()
+w2.preview = object()                       # stale artifacts must be dropped
+w2.btn_save.setEnabled(True)
+w2.open_project_file(str(proj))
+assert w2.preview is None and not w2.btn_save.isEnabled()
+assert len(w2.scene.parts) == 1
+p = w2.scene.parts[0]
+assert (p.x, p.y, p.rot_z_deg, p.scale) == (123.4, 56.7, 30.0, 1.25)
+assert w2.selected is p
+assert w2.cfg.process.layer_height_mm == 0.2
+assert w2.f_lh.value() == 0.2
+assert w2.cfg.fill.mode == "streamline" and w2.f_mode.currentText() == "streamline"
+assert w2.cfg.process.lead_in_len_mm == 0.3, "off-grid value must survive save/load"
+assert w2.cfg.process.bed_temp_c == 151.5
+assert w2.arr_spacing.value() == 55.0
+assert w2.bundle.collections["process"].selected == "proj proc"
+assert not w2.bundle.collections["process"].is_dirty(), "should reconcile clean"
+assert w2.csv_path and Path(w2.csv_path).read_bytes() == csv.read_bytes(), \\
+    "embedded CSV must be restored"
+assert "(embedded)" in w2.csv_lbl.text()
+assert w2.cfg.screener.csv_path == str(csv), "provenance path stays in cfg"
+
+# --- model-only project keeps current settings + presets ---
+import zipfile
+entries = {}
+with zipfile.ZipFile(proj) as z:
+    entries = {n: z.read(n) for n in z.namelist() if n != "config.yaml"}
+mproj = tmp / "model_only.rfproj"
+with zipfile.ZipFile(mproj, "w") as z:
+    for n, b in entries.items():
+        z.writestr(n, b)
+before_lh = w2.cfg.process.layer_height_mm
+before_sel = dict(w2.bundle.selections())
+w2.open_project_file(str(mproj))
+assert w2.cfg.process.layer_height_mm == before_lh, "model-only load reset the config"
+assert w2.bundle.selections() == before_sel, "model-only load reset the presets"
+assert len(w2.scene.parts) == 1
+
+w.close(); w2.close()
+print('ROUNDTRIP_OK')
+"""
+    out = _run_gl_subprocess(code, tmp_path, tmp_path)
+    assert "ROUNDTRIP_OK" in out

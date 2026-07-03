@@ -31,6 +31,26 @@ class TrimeshBackend(GeometryBackend):
             raise ValueError(f"{path!r} contains no faces.")
         return obj
 
+    def load_bytes(self, data: bytes, file_type: str = "stl", label: str = "<bytes>"):
+        """Load a mesh from in-memory bytes (embedded project geometry) with the
+        SAME guards and semantics as :meth:`load`, so meshes restored from a
+        project take the identical path as meshes added from disk."""
+        import io
+
+        import trimesh
+
+        obj = trimesh.load(io.BytesIO(data), file_type=file_type, force="mesh")
+        if isinstance(obj, trimesh.Scene):
+            if not obj.geometry:
+                raise ValueError(f"{label!r} loaded as an empty scene (no geometry).")
+            obj = obj.dump(concatenate=True)
+        if not isinstance(obj, trimesh.Trimesh):
+            raise TypeError(
+                f"{label!r} did not load as a triangular mesh (got {type(obj).__name__}).")
+        if obj.is_empty or len(obj.faces) == 0:
+            raise ValueError(f"{label!r} contains no faces.")
+        return obj
+
     def repair(self, mesh):
         """Best-effort watertight/manifold repair (SPEC §3.2).
 
