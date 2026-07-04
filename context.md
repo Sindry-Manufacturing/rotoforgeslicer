@@ -116,8 +116,9 @@ and rejected; instead we port its subsystems from the user's source zip
 
 | Item | State |
 |---|---|
-| Branch / HEAD | `feat/slicer-m1-m2` @ `54c1b15`, working tree clean |
-| Tests | 272 passing (`pytest -q` via AppData CPython 3.11) |
+| Branch / HEAD | `feat/slicer-m1-m2` @ `b0ec77e`, working tree clean |
+| Remote | github.com/Sindry-Manufacturing/rotoforgeslicer (`main` = `feat/slicer-m1-m2`; AGPL-3.0 LICENSE from the repo init; CI builds Win+Linux on `v*` tags / manual dispatch) |
+| Tests | 278 passing (`pytest -q` via AppData CPython 3.11) |
 | Exe | `dist/RotoforgeSlicer.exe` (606 MB), studio default, `--classic` = old GUI |
 | Deps | + pyvista 0.48 / pyvistaqt 0.12 (runtime); PyInstaller 6.21 builds it |
 | Config | `config/machine_duet3.yaml`; Ï‰_C=360Â°/s measured; range Â±180Â° is a **placeholder** |
